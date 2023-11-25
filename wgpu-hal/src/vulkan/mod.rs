@@ -99,7 +99,7 @@ struct Swapchain {
     raw_flags: vk::SwapchainCreateFlagsKHR,
     functor: khr::Swapchain,
     device: Arc<DeviceShared>,
-    fence: vk::Fence,
+    semaphore: vk::Semaphore,
     images: Vec<vk::Image>,
     config: crate::SurfaceConfiguration,
     view_formats: Vec<wgt::TextureFormat>,
