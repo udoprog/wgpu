@@ -48,6 +48,7 @@ use ash::{
     vk,
 };
 use parking_lot::{Mutex, RwLock};
+use smallvec::SmallVec;
 
 use crate::RawSet;
 
@@ -86,13 +87,13 @@ impl crate::Api for Api {
 }
 
 pub struct SubmitSurfaceTextureSet {
-    semaphores: ArrayVec<vk::Semaphore, 1>,
+    semaphores: SmallVec<[vk::Semaphore; 2]>,
 }
 
 impl RawSet<SurfaceTexture> for SubmitSurfaceTextureSet {
     fn new() -> Self {
         Self {
-            semaphores: ArrayVec::new(),
+            semaphores: SmallVec::new(),
         }
     }
 
