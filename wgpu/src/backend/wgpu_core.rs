@@ -231,6 +231,7 @@ impl ContextWgpuCore {
         self.0.generate_report()
     }
 
+    #[inline(always)]
     fn handle_error(
         &self,
         sink_mutex: &Mutex<ErrorSinkRaw>,
@@ -239,20 +240,34 @@ impl ContextWgpuCore {
         label: Label<'_>,
         string: &'static str,
     ) {
-        let error = wgc::error::ContextError {
+        self.handle_error_inner(sink_mutex, Box::new(cause), label_key, label, string)
+    }
+
+    // Type erased variant of handle_error to reduce monomorphization.
+    fn handle_error_inner(
+        &self,
+        sink_mutex: &Mutex<ErrorSinkRaw>,
+        #[cfg(send_sync)] cause: Box<dyn Error + Send + Sync + 'static>,
+        #[cfg(not(send_sync))] cause: Box<dyn Error + 'static>,
+        label_key: &'static str,
+        label: Label<'_>,
+        string: &'static str,
+    ) {
+        let build = |cause| wgc::error::ContextError {
             string,
-            cause: Box::new(cause),
+            cause,
             label: label.unwrap_or_default().to_string(),
             label_key,
         };
+
         let mut sink = sink_mutex.lock();
-        let mut source_opt: Option<&(dyn Error + 'static)> = Some(&error);
+        let mut source_opt: Option<&(dyn Error + 'static)> = Some(cause.as_ref());
         while let Some(source) = source_opt {
             if let Some(wgc::device::DeviceError::OutOfMemory) =
                 source.downcast_ref::<wgc::device::DeviceError>()
             {
                 return sink.handle_error(crate::Error::OutOfMemory {
-                    source: Box::new(error),
+                    source: Box::new(build(cause)),
                 });
             }
             source_opt = source.source();
@@ -260,11 +275,12 @@ impl ContextWgpuCore {
 
         // Otherwise, it is a validation error
         sink.handle_error(crate::Error::Validation {
-            description: self.format_error(&error),
-            source: Box::new(error),
+            description: self.format_error(cause.as_ref()),
+            source: Box::new(build(cause)),
         });
     }
 
+    #[inline(always)]
     fn handle_error_nolabel(
         &self,
         sink_mutex: &Mutex<ErrorSinkRaw>,
@@ -283,7 +299,7 @@ impl ContextWgpuCore {
         panic!("Error in {operation}: {f}", f = self.format_error(&cause));
     }
 
-    fn format_error(&self, err: &(impl Error + 'static)) -> String {
+    fn format_error(&self, err: &(dyn Error + 'static)) -> String {
         let global = self.global();
         let mut err_descs = vec![];
 
