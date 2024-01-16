@@ -19,7 +19,7 @@ use crate::device::trace::Action;
 use crate::{
     conv,
     device::any_device::AnyDevice,
-    device::{DeviceError, MissingDownlevelFlags, WaitIdleError},
+    device::{DeviceErrorKind, MissingDownlevelFlags, WaitIdleErrorKind},
     global::Global,
     hal_api::HalApi,
     hal_label,
@@ -48,26 +48,38 @@ pub(crate) struct Presentation {
     pub(crate) acquired_texture: Option<TextureId>,
 }
 
+error_proxy! {
+    pub struct SurfaceError {
+        kind: SurfaceErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum SurfaceError {
+pub(crate) enum SurfaceErrorKind {
     #[error("Surface is invalid")]
     Invalid,
     #[error("Surface is not configured for presentation")]
     NotConfigured,
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Surface image is already acquired")]
     AlreadyAcquired,
     #[error("Acquired frame is still referenced")]
     StillReferenced,
 }
 
+error_proxy! {
+    pub struct ConfigureSurfaceError {
+        kind: ConfigureSurfaceErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum ConfigureSurfaceError {
+pub(crate) enum ConfigureSurfaceErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Invalid surface")]
     InvalidSurface,
     #[error("The view format {0:?} is not compatible with texture format {1:?}, only changing srgb-ness is allowed.")]
@@ -107,12 +119,12 @@ pub enum ConfigureSurfaceError {
     StuckGpu,
 }
 
-impl From<WaitIdleError> for ConfigureSurfaceError {
-    fn from(e: WaitIdleError) -> Self {
+impl From<WaitIdleErrorKind> for ConfigureSurfaceErrorKind {
+    fn from(e: WaitIdleErrorKind) -> Self {
         match e {
-            WaitIdleError::Device(d) => ConfigureSurfaceError::Device(d),
-            WaitIdleError::WrongSubmissionIndex(..) => unreachable!(),
-            WaitIdleError::StuckGpu => ConfigureSurfaceError::StuckGpu,
+            WaitIdleErrorKind::Device(d) => ConfigureSurfaceErrorKind::Device(d),
+            WaitIdleErrorKind::WrongSubmissionIndex(..) => unreachable!(),
+            WaitIdleErrorKind::StuckGpu => ConfigureSurfaceErrorKind::StuckGpu,
         }
     }
 }
@@ -139,20 +151,20 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let surface = self
             .surfaces
             .get(surface_id)
-            .map_err(|_| SurfaceError::Invalid)?;
+            .map_err(|_| SurfaceErrorKind::Invalid)?;
 
         let (device, config) = if let Some(ref present) = *surface.presentation.lock() {
             match present.device.downcast_clone::<A>() {
                 Some(device) => {
                     if !device.is_valid() {
-                        return Err(DeviceError::Lost.into());
+                        return Err(DeviceErrorKind::Lost.into());
                     }
                     (device, present.config.clone())
                 }
-                None => return Err(SurfaceError::NotConfigured),
+                None => return Err(SurfaceErrorKind::NotConfigured.into()),
             }
         } else {
-            return Err(SurfaceError::NotConfigured);
+            return Err(SurfaceErrorKind::NotConfigured.into());
         };
 
         #[cfg(feature = "trace")]
@@ -211,7 +223,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                         &clear_view_desc,
                     )
                 }
-                .map_err(DeviceError::from)?;
+                .map_err(DeviceErrorKind::from)?;
 
                 let mut presentation = surface.presentation.lock();
                 let present = presentation.as_mut().unwrap();
@@ -248,7 +260,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                 }
 
                 if present.acquired_texture.is_some() {
-                    return Err(SurfaceError::AlreadyAcquired);
+                    return Err(SurfaceErrorKind::AlreadyAcquired.into());
                 }
                 present.acquired_texture = Some(id);
 
@@ -265,7 +277,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                 match err {
                     hal::SurfaceError::Lost => Status::Lost,
                     hal::SurfaceError::Device(err) => {
-                        return Err(DeviceError::from(err).into());
+                        return Err(DeviceErrorKind::from(err).into());
                     }
                     hal::SurfaceError::Outdated => Status::Outdated,
                     hal::SurfaceError::Other(msg) => {
@@ -290,17 +302,17 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let surface = self
             .surfaces
             .get(surface_id)
-            .map_err(|_| SurfaceError::Invalid)?;
+            .map_err(|_| SurfaceErrorKind::Invalid)?;
 
         let mut presentation = surface.presentation.lock();
         let present = match presentation.as_mut() {
             Some(present) => present,
-            None => return Err(SurfaceError::NotConfigured),
+            None => return Err(SurfaceErrorKind::NotConfigured.into()),
         };
 
         let device = present.device.downcast_ref::<A>().unwrap();
         if !device.is_valid() {
-            return Err(DeviceError::Lost.into());
+            return Err(DeviceErrorKind::Lost.into());
         }
         let queue_id = device.queue_id.read().unwrap();
         let queue = hub.queues.get(queue_id).unwrap();
@@ -314,7 +326,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             let texture_id = present
                 .acquired_texture
                 .take()
-                .ok_or(SurfaceError::AlreadyAcquired)?;
+                .ok_or(SurfaceErrorKind::AlreadyAcquired)?;
 
             // The texture ID got added to the device tracker by `submit()`,
             // and now we are moving it away.
@@ -367,11 +379,13 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             Ok(()) => Ok(Status::Good),
             Err(err) => match err {
                 hal::SurfaceError::Lost => Ok(Status::Lost),
-                hal::SurfaceError::Device(err) => Err(SurfaceError::from(DeviceError::from(err))),
+                hal::SurfaceError::Device(err) => {
+                    Err(SurfaceErrorKind::from(DeviceErrorKind::from(err)).into())
+                }
                 hal::SurfaceError::Outdated => Ok(Status::Outdated),
                 hal::SurfaceError::Other(msg) => {
                     log::error!("acquire error: {}", msg);
-                    Err(SurfaceError::Invalid)
+                    Err(SurfaceErrorKind::Invalid.into())
                 }
             },
         }
@@ -388,16 +402,16 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let surface = self
             .surfaces
             .get(surface_id)
-            .map_err(|_| SurfaceError::Invalid)?;
+            .map_err(|_| SurfaceErrorKind::Invalid)?;
         let mut presentation = surface.presentation.lock();
         let present = match presentation.as_mut() {
             Some(present) => present,
-            None => return Err(SurfaceError::NotConfigured),
+            None => return Err(SurfaceErrorKind::NotConfigured.into()),
         };
 
         let device = present.device.downcast_ref::<A>().unwrap();
         if !device.is_valid() {
-            return Err(DeviceError::Lost.into());
+            return Err(DeviceErrorKind::Lost.into());
         }
 
         #[cfg(feature = "trace")]
@@ -409,7 +423,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             let texture_id = present
                 .acquired_texture
                 .take()
-                .ok_or(SurfaceError::AlreadyAcquired)?;
+                .ok_or(SurfaceErrorKind::AlreadyAcquired)?;
 
             // The texture ID got added to the device tracker by `submit()`,
             // and now we are moving it away.

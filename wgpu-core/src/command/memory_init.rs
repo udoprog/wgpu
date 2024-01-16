@@ -12,7 +12,8 @@ use crate::{
 };
 
 use super::{
-    clear::clear_texture, BakedCommands, ClearError, DestroyedBufferError, DestroyedTextureError,
+    clear::clear_texture, BakedCommands, ClearErrorKind, DestroyedBufferError,
+    DestroyedTextureError,
 };
 
 /// Surface that was discarded by `StoreOp::Discard` of a preceding renderpass.
@@ -315,7 +316,7 @@ impl<A: HalApi> BakedCommands<A> {
                 // A Texture can be destroyed between the command recording
                 // and now, this is out of our control so we have to handle
                 // it gracefully.
-                if let Err(ClearError::InvalidTexture(id)) = clear_result {
+                if let Err(ClearErrorKind::InvalidTexture(id)) = clear_result {
                     return Err(DestroyedTextureError(id));
                 }
 

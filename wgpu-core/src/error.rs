@@ -3,6 +3,55 @@ use std::error::Error;
 
 use crate::{gfx_select, global::Global, identity::IdentityManagerFactory};
 
+/// Define a public error proxy which wraps and hides `kind` error internals.
+///
+/// The `kind` type should be used in strictly internal APIs, while this proxy
+/// is used when exposing the error through public APIs.
+macro_rules! error_proxy {
+    (
+        $(#[$($meta:meta)*])*
+        $vis:vis struct $name:ident { $field_vis:vis kind: $kind:ty $(,)? }
+    ) => {
+        $(#[$($meta)*])*
+        $vis struct $name {
+            $field_vis kind: $kind,
+        }
+
+        impl<T> From<T> for $name
+        where
+            $kind: From<T>
+        {
+            #[inline]
+            fn from(error: T) -> Self {
+                Self {
+                    kind: <$kind>::from(error),
+                }
+            }
+        }
+
+        impl ::std::error::Error for $name {
+            #[inline]
+            fn source(&self) -> Option<&(dyn ::std::error::Error + 'static)> {
+                ::std::error::Error::source(&self.kind)
+            }
+        }
+
+        impl ::std::fmt::Display for $name {
+            #[inline]
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                ::std::fmt::Display::fmt(&self.kind, f)
+            }
+        }
+
+        impl ::std::fmt::Debug for $name {
+            #[inline]
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                ::std::fmt::Debug::fmt(&self.kind, f)
+            }
+        }
+    }
+}
+
 pub struct ErrorFormatter<'a> {
     writer: &'a mut dyn fmt::Write,
     global: &'a Global<IdentityManagerFactory>,

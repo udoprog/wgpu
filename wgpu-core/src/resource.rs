@@ -2,7 +2,7 @@
 use crate::device::trace;
 use crate::{
     device::{
-        queue, BufferMapPendingClosure, Device, DeviceError, HostMap, MissingDownlevelFlags,
+        queue, BufferMapPendingClosure, Device, DeviceErrorKind, HostMap, MissingDownlevelFlags,
         MissingFeatures,
     },
     global::Global,
@@ -225,9 +225,9 @@ pub struct BufferMapCallback {
 }
 
 #[cfg(send_sync)]
-type BufferMapCallbackCallback = Box<dyn FnOnce(BufferAccessResult) + Send + 'static>;
+type BufferMapCallbackCallback = Box<dyn FnOnce(Result<(), BufferAccessError>) + Send + 'static>;
 #[cfg(not(send_sync))]
-type BufferMapCallbackCallback = Box<dyn FnOnce(BufferAccessResult) + 'static>;
+type BufferMapCallbackCallback = Box<dyn FnOnce(Result<(), BufferAccessError>) + 'static>;
 
 enum BufferMapCallbackInner {
     Rust { callback: BufferMapCallbackCallback },
@@ -266,31 +266,33 @@ impl BufferMapCallback {
     pub(crate) fn call(self, result: BufferAccessResult) {
         match self.inner {
             BufferMapCallbackInner::Rust { callback } => {
-                callback(result);
+                callback(result.map_err(Into::into));
             }
             // SAFETY: the contract of the call to from_c says that this unsafe is sound.
             BufferMapCallbackInner::C { inner } => unsafe {
                 let status = match result {
                     Ok(()) => BufferMapAsyncStatus::Success,
-                    Err(BufferAccessError::Device(_)) => BufferMapAsyncStatus::ContextLost,
-                    Err(BufferAccessError::Invalid) | Err(BufferAccessError::Destroyed) => {
+                    Err(BufferAccessErrorKind::Device(_)) => BufferMapAsyncStatus::ContextLost,
+                    Err(BufferAccessErrorKind::Invalid) | Err(BufferAccessErrorKind::Destroyed) => {
                         BufferMapAsyncStatus::Invalid
                     }
-                    Err(BufferAccessError::AlreadyMapped) => BufferMapAsyncStatus::AlreadyMapped,
-                    Err(BufferAccessError::MapAlreadyPending) => {
+                    Err(BufferAccessErrorKind::AlreadyMapped) => {
+                        BufferMapAsyncStatus::AlreadyMapped
+                    }
+                    Err(BufferAccessErrorKind::MapAlreadyPending) => {
                         BufferMapAsyncStatus::MapAlreadyPending
                     }
-                    Err(BufferAccessError::MissingBufferUsage(_)) => {
+                    Err(BufferAccessErrorKind::MissingBufferUsage(_)) => {
                         BufferMapAsyncStatus::InvalidUsageFlags
                     }
-                    Err(BufferAccessError::UnalignedRange)
-                    | Err(BufferAccessError::UnalignedRangeSize { .. })
-                    | Err(BufferAccessError::UnalignedOffset { .. }) => {
+                    Err(BufferAccessErrorKind::UnalignedRange)
+                    | Err(BufferAccessErrorKind::UnalignedRangeSize { .. })
+                    | Err(BufferAccessErrorKind::UnalignedOffset { .. }) => {
                         BufferMapAsyncStatus::InvalidAlignment
                     }
-                    Err(BufferAccessError::OutOfBoundsUnderrun { .. })
-                    | Err(BufferAccessError::OutOfBoundsOverrun { .. })
-                    | Err(BufferAccessError::NegativeRange { .. }) => {
+                    Err(BufferAccessErrorKind::OutOfBoundsUnderrun { .. })
+                    | Err(BufferAccessErrorKind::OutOfBoundsOverrun { .. })
+                    | Err(BufferAccessErrorKind::NegativeRange { .. }) => {
                         BufferMapAsyncStatus::InvalidRange
                     }
                     Err(_) => BufferMapAsyncStatus::Error,
@@ -308,11 +310,17 @@ pub struct BufferMapOperation {
     pub callback: Option<BufferMapCallback>,
 }
 
+error_proxy! {
+    pub struct BufferAccessError {
+        kind: BufferAccessErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum BufferAccessError {
+pub(crate) enum BufferAccessErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Buffer map failed")]
     Failed,
     #[error("Buffer is invalid")]
@@ -356,7 +364,7 @@ pub enum BufferAccessError {
     MapAborted,
 }
 
-pub type BufferAccessResult = Result<(), BufferAccessError>;
+pub(crate) type BufferAccessResult = Result<(), BufferAccessErrorKind>;
 
 #[derive(Debug)]
 pub(crate) struct BufferPendingMapping<A: HalApi> {
@@ -408,7 +416,7 @@ impl<A: HalApi> Buffer<A> {
     }
 
     // Note: This must not be called while holding a lock.
-    pub(crate) fn unmap(self: &Arc<Self>) -> Result<(), BufferAccessError> {
+    pub(crate) fn unmap(self: &Arc<Self>) -> Result<(), BufferAccessErrorKind> {
         if let Some((mut operation, status)) = self.unmap_inner()? {
             if let Some(callback) = operation.callback.take() {
                 callback.call(status);
@@ -418,14 +426,16 @@ impl<A: HalApi> Buffer<A> {
         Ok(())
     }
 
-    fn unmap_inner(self: &Arc<Self>) -> Result<Option<BufferMapPendingClosure>, BufferAccessError> {
+    fn unmap_inner(
+        self: &Arc<Self>,
+    ) -> Result<Option<BufferMapPendingClosure>, BufferAccessErrorKind> {
         use hal::Device;
 
         let device = &self.device;
         let snatch_guard = device.snatchable_lock.read();
         let raw_buf = self
             .raw(&snatch_guard)
-            .ok_or(BufferAccessError::Destroyed)?;
+            .ok_or(BufferAccessErrorKind::Destroyed)?;
         let buffer_id = self.info.id();
         log::debug!("Buffer {:?} map state -> Idle", buffer_id);
         match mem::replace(&mut *self.map_state.lock(), resource::BufferMapState::Idle) {
@@ -490,10 +500,10 @@ impl<A: HalApi> Buffer<A> {
                 pending_writes.dst_buffers.insert(buffer_id, self.clone());
             }
             resource::BufferMapState::Idle => {
-                return Err(BufferAccessError::NotMapped);
+                return Err(BufferAccessErrorKind::NotMapped);
             }
             resource::BufferMapState::Waiting(pending) => {
-                return Ok(Some((pending.op, Err(BufferAccessError::MapAborted))));
+                return Ok(Some((pending.op, Err(BufferAccessErrorKind::MapAborted))));
             }
             resource::BufferMapState::Active { ptr, range, host } => {
                 if host == HostMap::Write {
@@ -516,7 +526,7 @@ impl<A: HalApi> Buffer<A> {
                     device
                         .raw()
                         .unmap_buffer(raw_buf)
-                        .map_err(DeviceError::from)?
+                        .map_err(DeviceErrorKind::from)?
                 };
             }
         }
@@ -565,13 +575,19 @@ impl<A: HalApi> Buffer<A> {
     }
 }
 
+error_proxy! {
+    pub struct CreateBufferError {
+        kind: CreateBufferErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateBufferError {
+pub(crate) enum CreateBufferErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Failed to map buffer while creating: {0}")]
-    AccessError(#[from] BufferAccessError),
+    AccessError(#[from] BufferAccessErrorKind),
     #[error("Buffers that are mapped at creation have to be aligned to `COPY_BUFFER_ALIGNMENT`")]
     UnalignedSize,
     #[error("Invalid usage flags {0:?}")]
@@ -1005,7 +1021,7 @@ impl<A: HalApi> Drop for DestroyedTexture<A> {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum TextureErrorDimension {
+pub(crate) enum TextureErrorDimension {
     X,
     Y,
     Z,
@@ -1013,7 +1029,7 @@ pub enum TextureErrorDimension {
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum TextureDimensionError {
+pub(crate) enum TextureDimensionError {
     #[error("Dimension {0:?} is zero")]
     Zero(TextureErrorDimension),
     #[error("Dimension {dim:?} value {given} exceeds the limit of {limit}")]
@@ -1054,13 +1070,19 @@ pub enum TextureDimensionError {
     MultisampledDepthOrArrayLayer(u32),
 }
 
+error_proxy! {
+    pub struct CreateTextureError {
+        kind: CreateTextureErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateTextureError {
+pub(crate) enum CreateTextureErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error(transparent)]
-    CreateTextureView(#[from] CreateTextureViewError),
+    CreateTextureView(#[from] CreateTextureViewErrorKind),
     #[error("Invalid usage flags {0:?}")]
     InvalidUsage(wgt::TextureUsages),
     #[error(transparent)]
@@ -1208,9 +1230,15 @@ impl<A: HalApi> TextureView<A> {
     }
 }
 
+error_proxy! {
+    pub struct CreateTextureViewError {
+        kind: CreateTextureViewErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateTextureViewError {
+pub(crate) enum CreateTextureViewErrorKind {
     #[error("Parent texture is invalid or destroyed")]
     InvalidTexture,
     #[error("Not enough memory left to create texture view")]
@@ -1336,7 +1364,7 @@ impl<A: HalApi> Sampler<A> {
 }
 
 #[derive(Copy, Clone)]
-pub enum SamplerFilterErrorType {
+pub(crate) enum SamplerFilterErrorType {
     MagFilter,
     MinFilter,
     MipmapFilter,
@@ -1352,11 +1380,17 @@ impl Debug for SamplerFilterErrorType {
     }
 }
 
+error_proxy! {
+    pub struct CreateSamplerError {
+        kind: CreateSamplerErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateSamplerError {
+pub(crate) enum CreateSamplerErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Invalid lodMinClamp: {0}. Must be greater or equal to 0.0")]
     InvalidLodMinClamp(f32),
     #[error("Invalid lodMaxClamp: {lod_max_clamp}. Must be greater or equal to lodMinClamp (which is {lod_min_clamp}).")]
@@ -1391,11 +1425,17 @@ impl<A: HalApi> Resource<SamplerId> for Sampler<A> {
     }
 }
 
+error_proxy! {
+    pub struct CreateQuerySetError {
+        kind: CreateQuerySetErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateQuerySetError {
+pub(crate) enum CreateQuerySetErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("QuerySets cannot be made with zero queries")]
     ZeroCount,
     #[error("{count} is too many queries for a single QuerySet. QuerySets cannot be made more than {maximum} queries.")]

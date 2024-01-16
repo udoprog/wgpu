@@ -5,7 +5,7 @@ use crate::{
     id::{self},
     identity::{GlobalIdentityHandlerFactory, Input},
     resource::{Buffer, BufferAccessResult},
-    resource::{BufferAccessError, BufferMapOperation},
+    resource::{BufferAccessErrorKind, BufferMapOperation},
     resource_log, Label, DOWNLEVEL_ERROR_MESSAGE,
 };
 
@@ -26,7 +26,9 @@ pub mod queue;
 pub mod resource;
 #[cfg(any(feature = "trace", feature = "replay"))]
 pub mod trace;
-pub use {life::WaitIdleError, resource::Device};
+pub use life::WaitIdleError;
+pub(crate) use life::WaitIdleErrorKind;
+pub use resource::Device;
 
 pub const SHADER_STAGE_COUNT: usize = hal::MAX_CONCURRENT_SHADER_STAGES;
 // Should be large enough for the largest possible texture row. This
@@ -82,7 +84,7 @@ pub(crate) struct RenderPassContext {
 }
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum RenderPassCompatibilityError {
+pub(crate) enum RenderPassCompatibilityError {
     #[error(
         "Incompatible color attachments at indices {indices:?}: the RenderPass uses textures with formats {expected:?} but the {ty:?} uses attachments with formats {actual:?}",
     )]
@@ -166,13 +168,13 @@ impl RenderPassContext {
     }
 }
 
-pub type BufferMapPendingClosure = (BufferMapOperation, BufferAccessResult);
+pub(crate) type BufferMapPendingClosure = (BufferMapOperation, BufferAccessResult);
 
 #[derive(Default)]
-pub struct UserClosures {
-    pub mappings: Vec<BufferMapPendingClosure>,
-    pub submissions: SmallVec<[queue::SubmittedWorkDoneClosure; 1]>,
-    pub device_lost_invocations: SmallVec<[DeviceLostInvocation; 1]>,
+pub(crate) struct UserClosures {
+    pub(crate) mappings: Vec<BufferMapPendingClosure>,
+    pub(crate) submissions: SmallVec<[queue::SubmittedWorkDoneClosure; 1]>,
+    pub(crate) device_lost_invocations: SmallVec<[DeviceLostInvocation; 1]>,
 }
 
 impl UserClosures {
@@ -319,14 +321,14 @@ fn map_buffer<A: HalApi>(
     offset: BufferAddress,
     size: BufferAddress,
     kind: HostMap,
-) -> Result<ptr::NonNull<u8>, BufferAccessError> {
+) -> Result<ptr::NonNull<u8>, BufferAccessErrorKind> {
     let snatch_guard = buffer.device.snatchable_lock.read();
     let raw_buffer = buffer
         .raw(&snatch_guard)
-        .ok_or(BufferAccessError::Destroyed)?;
+        .ok_or(BufferAccessErrorKind::Destroyed)?;
     let mapping = unsafe {
         raw.map_buffer(raw_buffer, offset..offset + size)
-            .map_err(DeviceError::from)?
+            .map_err(DeviceErrorKind::from)?
     };
 
     *buffer.sync_mapped_writes.lock() = match kind {
@@ -418,9 +420,22 @@ impl<A: HalApi> CommandAllocator<A> {
 #[error("Device is invalid")]
 pub struct InvalidDevice;
 
+error_proxy! {
+    pub struct DeviceError {
+        kind: DeviceErrorKind,
+    }
+}
+
+impl DeviceError {
+    /// Test if the device error is an out-of-memory error.
+    pub fn is_out_of_memory(&self) -> bool {
+        matches!(self.kind, DeviceErrorKind::OutOfMemory)
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum DeviceError {
+pub(crate) enum DeviceErrorKind {
     #[error("Parent device is invalid.")]
     Invalid,
     #[error("Parent device is lost")]
@@ -435,26 +450,26 @@ pub enum DeviceError {
     WrongDevice,
 }
 
-impl From<hal::DeviceError> for DeviceError {
+impl From<hal::DeviceError> for DeviceErrorKind {
     fn from(error: hal::DeviceError) -> Self {
         match error {
-            hal::DeviceError::Lost => DeviceError::Lost,
-            hal::DeviceError::OutOfMemory => DeviceError::OutOfMemory,
-            hal::DeviceError::ResourceCreationFailed => DeviceError::ResourceCreationFailed,
+            hal::DeviceError::Lost => DeviceErrorKind::Lost,
+            hal::DeviceError::OutOfMemory => DeviceErrorKind::OutOfMemory,
+            hal::DeviceError::ResourceCreationFailed => DeviceErrorKind::ResourceCreationFailed,
         }
     }
 }
 
 #[derive(Clone, Debug, Error)]
 #[error("Features {0:?} are required but not enabled on the device")]
-pub struct MissingFeatures(pub wgt::Features);
+pub(crate) struct MissingFeatures(pub wgt::Features);
 
 #[derive(Clone, Debug, Error)]
 #[error(
     "Downlevel flags {0:?} are required but not supported on the device.\n{}",
     DOWNLEVEL_ERROR_MESSAGE
 )]
-pub struct MissingDownlevelFlags(pub wgt::DownlevelFlags);
+pub(crate) struct MissingDownlevelFlags(pub wgt::DownlevelFlags);
 
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "trace", derive(serde::Serialize))]

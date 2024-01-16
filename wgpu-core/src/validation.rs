@@ -173,9 +173,15 @@ pub fn check_texture_usage(
     }
 }
 
+error_proxy! {
+    pub struct BindingError {
+        kind: BindingErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum BindingError {
+pub(crate) enum BindingErrorKind {
     #[error("Binding is missing from the pipeline layout")]
     Missing,
     #[error("Visibility flags don't include the shader stage")]
@@ -214,7 +220,7 @@ pub enum BindingError {
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum FilteringError {
+pub(crate) enum FilteringError {
     #[error("Integer textures can't be sampled with a filtering sampler")]
     Integer,
     #[error("Non-filterable float textures can't be sampled with a filtering sampler")]
@@ -223,7 +229,7 @@ pub enum FilteringError {
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum InputError {
+pub(crate) enum InputError {
     #[error("Input is not provided by the earlier stage in the pipeline")]
     Missing,
     #[error("Input type is not compatible with the provided {0}")]
@@ -234,10 +240,16 @@ pub enum InputError {
     SamplingMismatch(Option<naga::Sampling>),
 }
 
+error_proxy! {
+    pub struct StageError {
+        kind: StageErrorKind,
+    }
+}
+
 /// Errors produced when validating a programmable stage of a pipeline.
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum StageError {
+pub(crate) enum StageErrorKind {
     #[error("Shader module is invalid")]
     InvalidModule,
     #[error(
@@ -254,7 +266,7 @@ pub enum StageError {
     #[error("Unable to find entry point '{0}'")]
     MissingEntryPoint(String),
     #[error("Shader global {0:?} is not available in the pipeline layout")]
-    Binding(naga::ResourceBinding, #[source] BindingError),
+    Binding(naga::ResourceBinding, #[source] BindingErrorKind),
     #[error("Unable to filter the texture ({texture:?}) by the sampler ({sampler:?})")]
     Filtering {
         texture: naga::ResourceBinding,
@@ -384,7 +396,7 @@ fn map_storage_format_from_naga(format: naga::StorageFormat) -> wgt::TextureForm
 }
 
 impl Resource {
-    fn check_binding_use(&self, entry: &BindGroupLayoutEntry) -> Result<(), BindingError> {
+    fn check_binding_use(&self, entry: &BindGroupLayoutEntry) -> Result<(), BindingErrorKind> {
         match self.ty {
             ResourceType::Buffer { size } => {
                 let min_size = match entry.ty {
@@ -404,18 +416,18 @@ impl Resource {
                             }
                         };
                         if self.class != class {
-                            return Err(BindingError::WrongAddressSpace {
+                            return Err(BindingErrorKind::WrongAddressSpace {
                                 binding: class,
                                 shader: self.class,
                             });
                         }
                         min_binding_size
                     }
-                    _ => return Err(BindingError::WrongType),
+                    _ => return Err(BindingErrorKind::WrongType),
                 };
                 match min_size {
                     Some(non_zero) if non_zero < size => {
-                        return Err(BindingError::WrongBufferSize(size))
+                        return Err(BindingErrorKind::WrongBufferSize(size))
                     }
                     _ => (),
                 }
@@ -423,10 +435,10 @@ impl Resource {
             ResourceType::Sampler { comparison } => match entry.ty {
                 BindingType::Sampler(ty) => {
                     if (ty == wgt::SamplerBindingType::Comparison) != comparison {
-                        return Err(BindingError::WrongSamplerComparison);
+                        return Err(BindingErrorKind::WrongSamplerComparison);
                     }
                 }
-                _ => return Err(BindingError::WrongType),
+                _ => return Err(BindingErrorKind::WrongType),
             },
             ResourceType::Texture {
                 dim,
@@ -437,7 +449,7 @@ impl Resource {
                     BindingType::Texture { view_dimension, .. }
                     | BindingType::StorageTexture { view_dimension, .. } => view_dimension,
                     _ => {
-                        return Err(BindingError::WrongTextureViewDimension {
+                        return Err(BindingErrorKind::WrongTextureViewDimension {
                             dim,
                             is_array: false,
                             binding: entry.ty,
@@ -449,7 +461,7 @@ impl Resource {
                         (naga::ImageDimension::D2, wgt::TextureViewDimension::D2Array) => (),
                         (naga::ImageDimension::Cube, wgt::TextureViewDimension::CubeArray) => (),
                         _ => {
-                            return Err(BindingError::WrongTextureViewDimension {
+                            return Err(BindingErrorKind::WrongTextureViewDimension {
                                 dim,
                                 is_array: true,
                                 binding: entry.ty,
@@ -463,7 +475,7 @@ impl Resource {
                         (naga::ImageDimension::D3, wgt::TextureViewDimension::D3) => (),
                         (naga::ImageDimension::Cube, wgt::TextureViewDimension::Cube) => (),
                         _ => {
-                            return Err(BindingError::WrongTextureViewDimension {
+                            return Err(BindingErrorKind::WrongTextureViewDimension {
                                 dim,
                                 is_array: false,
                                 binding: entry.ty,
@@ -497,7 +509,7 @@ impl Resource {
                         view_dimension: _,
                     } => {
                         let naga_format = map_storage_format_to_naga(format)
-                            .ok_or(BindingError::BadStorageFormat(format))?;
+                            .ok_or(BindingErrorKind::BadStorageFormat(format))?;
                         let naga_access = match access {
                             wgt::StorageTextureAccess::ReadOnly => naga::StorageAccess::LOAD,
                             wgt::StorageTextureAccess::WriteOnly => naga::StorageAccess::STORE,
@@ -508,10 +520,10 @@ impl Resource {
                             access: naga_access,
                         }
                     }
-                    _ => return Err(BindingError::WrongType),
+                    _ => return Err(BindingErrorKind::WrongType),
                 };
                 if class != expected_class {
-                    return Err(BindingError::WrongTextureClass {
+                    return Err(BindingErrorKind::WrongTextureClass {
                         binding: expected_class,
                         shader: class,
                     });
@@ -522,7 +534,7 @@ impl Resource {
         Ok(())
     }
 
-    fn derive_binding_type(&self) -> Result<BindingType, BindingError> {
+    fn derive_binding_type(&self) -> Result<BindingType, BindingErrorKind> {
         Ok(match self.ty {
             ResourceType::Buffer { size } => BindingType::Buffer {
                 ty: match self.class {
@@ -530,7 +542,7 @@ impl Resource {
                     naga::AddressSpace::Storage { access } => wgt::BufferBindingType::Storage {
                         read_only: access == naga::StorageAccess::LOAD,
                     },
-                    _ => return Err(BindingError::WrongType),
+                    _ => return Err(BindingErrorKind::WrongType),
                 },
                 has_dynamic_offset: false,
                 min_binding_size: Some(size),
@@ -587,7 +599,7 @@ impl Resource {
                         format: {
                             let f = map_storage_format_from_naga(format);
                             let original = map_storage_format_to_naga(f)
-                                .ok_or(BindingError::BadStorageFormat(f))?;
+                                .ok_or(BindingErrorKind::BadStorageFormat(f))?;
                             debug_assert_eq!(format, original);
                             f
                         },
@@ -953,7 +965,7 @@ impl Interface {
         }
     }
 
-    pub fn check_stage(
+    pub(crate) fn check_stage(
         &self,
         layouts: &mut BindingLayoutSource<'_>,
         shader_binding_sizes: &mut FastHashMap<naga::ResourceBinding, wgt::BufferSize>,
@@ -961,7 +973,7 @@ impl Interface {
         stage_bit: wgt::ShaderStages,
         inputs: StageIo,
         compare_function: Option<wgt::CompareFunction>,
-    ) -> Result<StageIo, StageError> {
+    ) -> Result<StageIo, StageErrorKind> {
         // Since a shader module can have multiple entry points with the same name,
         // we need to look for one with the right execution model.
         let shader_stage = match stage_bit {
@@ -974,7 +986,7 @@ impl Interface {
         let entry_point = self
             .entry_points
             .get(&pair)
-            .ok_or(StageError::MissingEntryPoint(pair.1))?;
+            .ok_or(StageErrorKind::MissingEntryPoint(pair.1))?;
 
         // check resources visibility
         for &handle in entry_point.resources.iter() {
@@ -995,22 +1007,22 @@ impl Interface {
                         }
 
                         let Some(map) = layouts.get(res.bind.group as usize) else {
-                            break 'err Err(BindingError::Missing);
+                            break 'err Err(BindingErrorKind::Missing);
                         };
 
                         let Some(entry) = map.get(res.bind.binding) else {
-                            break 'err Err(BindingError::Missing);
+                            break 'err Err(BindingErrorKind::Missing);
                         };
 
                         if !entry.visibility.contains(stage_bit) {
-                            break 'err Err(BindingError::Invisible);
+                            break 'err Err(BindingErrorKind::Invisible);
                         }
 
                         res.check_binding_use(entry)
                     }
                     BindingLayoutSource::Derived(layouts) => {
                         let Some(map) = layouts.get_mut(res.bind.group as usize) else {
-                            break 'err Err(BindingError::Missing);
+                            break 'err Err(BindingErrorKind::Missing);
                         };
 
                         let ty = match res.derive_binding_type() {
@@ -1020,7 +1032,7 @@ impl Interface {
 
                         match map.entry(res.bind.binding) {
                             indexmap::map::Entry::Occupied(e) if e.get().ty != ty => {
-                                break 'err Err(BindingError::InconsistentlyDerivedType)
+                                break 'err Err(BindingErrorKind::InconsistentlyDerivedType)
                             }
                             indexmap::map::Entry::Occupied(e) => {
                                 e.into_mut().visibility |= stage_bit;
@@ -1039,7 +1051,7 @@ impl Interface {
                 }
             };
             if let Err(error) = result {
-                return Err(StageError::Binding(res.bind.clone(), error));
+                return Err(StageErrorKind::Binding(res.bind.clone(), error));
             }
         }
 
@@ -1079,7 +1091,7 @@ impl Interface {
                 };
 
                 if let Some(error) = error {
-                    return Err(StageError::Filtering {
+                    return Err(StageErrorKind::Filtering {
                         texture: texture_bind.clone(),
                         sampler: sampler_bind.clone(),
                         error,
@@ -1103,7 +1115,7 @@ impl Interface {
                 || entry_point.workgroup_size[1] > max_workgroup_size_limits[1]
                 || entry_point.workgroup_size[2] > max_workgroup_size_limits[2]
             {
-                return Err(StageError::InvalidWorkgroupSize {
+                return Err(StageErrorKind::InvalidWorkgroupSize {
                     current: entry_point.workgroup_size,
                     current_total: total_invocations,
                     limit: max_workgroup_size_limits,
@@ -1159,7 +1171,7 @@ impl Interface {
                             inter_stage_components += num_components;
                         }
                         Err(error) => {
-                            return Err(StageError::Input {
+                            return Err(StageErrorKind::Input {
                                 location,
                                 var: iv.clone(),
                                 error,
@@ -1187,7 +1199,7 @@ impl Interface {
                 });
 
                 if !found {
-                    return Err(StageError::InputNotConsumed { location: index });
+                    return Err(StageErrorKind::InputNotConsumed { location: index });
                 }
             }
         }
@@ -1218,7 +1230,7 @@ impl Interface {
         }
 
         if inter_stage_components > self.limits.max_inter_stage_shader_components {
-            return Err(StageError::TooManyVaryings {
+            return Err(StageErrorKind::TooManyVaryings {
                 used: inter_stage_components,
                 limit: self.limits.max_inter_stage_shader_components,
             });
@@ -1235,14 +1247,14 @@ impl Interface {
         Ok(outputs)
     }
 
-    pub fn fragment_uses_dual_source_blending(
+    pub(crate) fn fragment_uses_dual_source_blending(
         &self,
         entry_point_name: &str,
-    ) -> Result<bool, StageError> {
+    ) -> Result<bool, StageErrorKind> {
         let pair = (naga::ShaderStage::Fragment, entry_point_name.to_string());
         self.entry_points
             .get(&pair)
-            .ok_or(StageError::MissingEntryPoint(pair.1))
+            .ok_or(StageErrorKind::MissingEntryPoint(pair.1))
             .map(|ep| ep.dual_source_blending)
     }
 }

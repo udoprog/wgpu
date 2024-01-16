@@ -11,14 +11,13 @@ mod transfer;
 use std::slice;
 use std::sync::Arc;
 
-pub(crate) use self::clear::clear_texture;
-pub use self::{
-    bundle::*, clear::ClearError, compute::*, draw::*, query::*, render::*, transfer::*,
-};
+pub use self::clear::ClearError;
+pub(crate) use self::clear::{clear_texture, ClearErrorKind};
+pub use self::{bundle::*, compute::*, draw::*, query::*, render::*, transfer::*};
 
 use self::memory_init::CommandBufferTextureMemoryActions;
 
-use crate::device::{Device, DeviceError};
+use crate::device::{Device, DeviceErrorKind};
 use crate::error::{ErrorFormatter, PrettyError};
 use crate::hub::Hub;
 use crate::id::CommandBufferId;
@@ -58,7 +57,7 @@ pub(crate) struct CommandEncoder<A: HalApi> {
 //TODO: handle errors better
 impl<A: HalApi> CommandEncoder<A> {
     /// Closes the live encoder
-    fn close_and_swap(&mut self) -> Result<(), DeviceError> {
+    fn close_and_swap(&mut self) -> Result<(), DeviceErrorKind> {
         if self.is_open {
             self.is_open = false;
             let new = unsafe { self.raw.end_encoding()? };
@@ -68,7 +67,7 @@ impl<A: HalApi> CommandEncoder<A> {
         Ok(())
     }
 
-    fn close(&mut self) -> Result<(), DeviceError> {
+    fn close(&mut self) -> Result<(), DeviceErrorKind> {
         if self.is_open {
             self.is_open = false;
             let cmd_buf = unsafe { self.raw.end_encoding()? };
@@ -85,7 +84,7 @@ impl<A: HalApi> CommandEncoder<A> {
         }
     }
 
-    fn open(&mut self) -> Result<&mut A::CommandEncoder, DeviceError> {
+    fn open(&mut self) -> Result<&mut A::CommandEncoder, DeviceErrorKind> {
         if !self.is_open {
             self.is_open = true;
             let label = self.label.as_deref();
@@ -95,7 +94,7 @@ impl<A: HalApi> CommandEncoder<A> {
         Ok(&mut self.raw)
     }
 
-    fn open_pass(&mut self, label: Option<&str>) -> Result<(), DeviceError> {
+    fn open_pass(&mut self, label: Option<&str>) -> Result<(), DeviceErrorKind> {
         self.is_open = true;
         unsafe { self.raw.begin_encoding(label)? };
 
@@ -128,7 +127,7 @@ pub struct CommandBufferMutable<A: HalApi> {
 impl<A: HalApi> CommandBufferMutable<A> {
     pub(crate) fn open_encoder_and_tracker(
         &mut self,
-    ) -> Result<(&mut A::CommandEncoder, &mut Tracker<A>), DeviceError> {
+    ) -> Result<(&mut A::CommandEncoder, &mut Tracker<A>), DeviceErrorKind> {
         let encoder = self.encoder.open()?;
         let tracker = &mut self.trackers;
 
@@ -253,15 +252,15 @@ impl<A: HalApi> CommandBuffer<A> {
     fn get_encoder(
         hub: &Hub<A>,
         id: id::CommandEncoderId,
-    ) -> Result<Arc<Self>, CommandEncoderError> {
+    ) -> Result<Arc<Self>, CommandEncoderErrorKind> {
         let storage = hub.command_buffers.read();
         match storage.get(id) {
             Ok(cmd_buf) => match cmd_buf.data.lock().as_ref().unwrap().status {
                 CommandEncoderStatus::Recording => Ok(cmd_buf.clone()),
-                CommandEncoderStatus::Finished => Err(CommandEncoderError::NotRecording),
-                CommandEncoderStatus::Error => Err(CommandEncoderError::Invalid),
+                CommandEncoderStatus::Finished => Err(CommandEncoderErrorKind::NotRecording),
+                CommandEncoderStatus::Error => Err(CommandEncoderErrorKind::Invalid),
             },
-            Err(_) => Err(CommandEncoderError::Invalid),
+            Err(_) => Err(CommandEncoderErrorKind::Invalid),
         }
     }
 
@@ -404,15 +403,21 @@ impl<C: Clone> BasePass<C> {
     }
 }
 
+error_proxy! {
+    pub struct CommandEncoderError {
+        kind: CommandEncoderErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CommandEncoderError {
+pub(crate) enum CommandEncoderErrorKind {
     #[error("Command encoder is invalid")]
     Invalid,
     #[error("Command encoder must be active")]
     NotRecording,
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
 }
 
 impl<G: GlobalIdentityHandlerFactory> Global<G> {
@@ -441,14 +446,16 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             None
                         }
                     }
-                    CommandEncoderStatus::Finished => Some(CommandEncoderError::NotRecording),
+                    CommandEncoderStatus::Finished => {
+                        Some(CommandEncoderErrorKind::NotRecording.into())
+                    }
                     CommandEncoderStatus::Error => {
                         cmd_buf_data.encoder.discard();
-                        Some(CommandEncoderError::Invalid)
+                        Some(CommandEncoderErrorKind::Invalid.into())
                     }
                 }
             }
-            Err(_) => Some(CommandEncoderError::Invalid),
+            Err(_) => Some(CommandEncoderErrorKind::Invalid.into()),
         };
 
         (encoder_id, error)

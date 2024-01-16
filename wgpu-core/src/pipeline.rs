@@ -1,9 +1,11 @@
 #[cfg(feature = "trace")]
 use crate::device::trace;
 use crate::{
-    binding_model::{CreateBindGroupLayoutError, CreatePipelineLayoutError, PipelineLayout},
-    command::ColorAttachmentError,
-    device::{Device, DeviceError, MissingDownlevelFlags, MissingFeatures, RenderPassContext},
+    binding_model::{
+        CreateBindGroupLayoutErrorKind, CreatePipelineLayoutErrorKind, PipelineLayout,
+    },
+    command::ColorAttachmentErrorKind,
+    device::{Device, DeviceErrorKind, MissingDownlevelFlags, MissingFeatures, RenderPassContext},
     hal_api::HalApi,
     id::{ComputePipelineId, PipelineLayoutId, RenderPipelineId, ShaderModuleId},
     resource::{Resource, ResourceInfo, ResourceType},
@@ -95,6 +97,7 @@ pub struct ShaderError<E> {
     pub label: Option<String>,
     pub inner: Box<E>,
 }
+
 #[cfg(feature = "wgsl")]
 impl fmt::Display for ShaderError<naga::front::wgsl::ParseError> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -103,6 +106,7 @@ impl fmt::Display for ShaderError<naga::front::wgsl::ParseError> {
         write!(f, "\nShader '{label}' parsing {string}")
     }
 }
+
 impl fmt::Display for ShaderError<naga::WithSpan<naga::valid::ValidationError>> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use codespan_reporting::{
@@ -134,6 +138,7 @@ impl fmt::Display for ShaderError<naga::WithSpan<naga::valid::ValidationError>> 
         )
     }
 }
+
 impl<E> Error for ShaderError<E>
 where
     ShaderError<E>: fmt::Display,
@@ -144,17 +149,34 @@ where
     }
 }
 
+error_proxy! {
+    pub struct CreateShaderModuleError {
+        kind: CreateShaderModuleErrorKind,
+    }
+}
+
+impl CreateShaderModuleError {
+    pub fn location(&self, source: &str) -> Option<naga::SourceLocation> {
+        match self.kind {
+            #[cfg(feature = "wgsl")]
+            CreateShaderModuleErrorKind::Parsing(ref err) => err.inner.location(source),
+            CreateShaderModuleErrorKind::Validation(ref err) => err.inner.location(source),
+            _ => None,
+        }
+    }
+}
+
 //Note: `Clone` would require `WithSpan: Clone`.
 #[derive(Debug, Error)]
 #[non_exhaustive]
-pub enum CreateShaderModuleError {
+pub(crate) enum CreateShaderModuleErrorKind {
     #[cfg(feature = "wgsl")]
     #[error(transparent)]
     Parsing(#[from] ShaderError<naga::front::wgsl::ParseError>),
     #[error("Failed to generate the backend-specific code")]
     Generation,
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error(transparent)]
     Validation(#[from] ShaderError<naga::WithSpan<naga::valid::ValidationError>>),
     #[error(transparent)]
@@ -167,17 +189,6 @@ pub enum CreateShaderModuleError {
         group: u32,
         limit: u32,
     },
-}
-
-impl CreateShaderModuleError {
-    pub fn location(&self, source: &str) -> Option<naga::SourceLocation> {
-        match *self {
-            #[cfg(feature = "wgsl")]
-            CreateShaderModuleError::Parsing(ref err) => err.inner.location(source),
-            CreateShaderModuleError::Validation(ref err) => err.inner.location(source),
-            _ => None,
-        }
-    }
 }
 
 /// Describes a programmable pipeline stage.
@@ -197,15 +208,15 @@ pub type ImplicitBindGroupCount = u8;
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum ImplicitLayoutError {
+pub(crate) enum ImplicitLayoutError {
     #[error("Missing IDs for deriving {0} bind groups")]
     MissingIds(ImplicitBindGroupCount),
     #[error("Unable to reflect the shader {0:?} interface")]
     ReflectionError(wgt::ShaderStages),
     #[error(transparent)]
-    BindGroup(#[from] CreateBindGroupLayoutError),
+    BindGroup(#[from] CreateBindGroupLayoutErrorKind),
     #[error(transparent)]
-    Pipeline(#[from] CreatePipelineLayoutError),
+    Pipeline(#[from] CreatePipelineLayoutErrorKind),
 }
 
 /// Describes a compute pipeline.
@@ -220,17 +231,32 @@ pub struct ComputePipelineDescriptor<'a> {
     pub stage: ProgrammableStageDescriptor<'a>,
 }
 
+error_proxy! {
+    pub struct CreateComputePipelineError {
+        kind: CreateComputePipelineErrorKind,
+    }
+}
+
+impl CreateComputePipelineError {
+    #[doc(hidden)]
+    pub fn as_shader_error(&self) -> Option<impl fmt::Display + '_> {
+        match self.kind {
+            CreateComputePipelineErrorKind::Internal(ref error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Error)]
-#[non_exhaustive]
-pub enum CreateComputePipelineError {
+pub(crate) enum CreateComputePipelineErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Pipeline layout is invalid")]
     InvalidLayout,
     #[error("Unable to derive an implicit layout")]
     Implicit(#[from] ImplicitLayoutError),
     #[error("Error matching shader requirements against the pipeline")]
-    Stage(#[from] validation::StageError),
+    Stage(#[from] validation::StageErrorKind),
     #[error("Internal error: {0}")]
     Internal(String),
     #[error(transparent)]
@@ -347,7 +373,7 @@ pub struct RenderPipelineDescriptor<'a> {
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum ColorStateError {
+pub(crate) enum ColorStateError {
     #[error("Format {0:?} is not renderable")]
     FormatNotRenderable(wgt::TextureFormat),
     #[error("Format {0:?} is not blendable")]
@@ -369,7 +395,7 @@ pub enum ColorStateError {
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum DepthStencilStateError {
+pub(crate) enum DepthStencilStateError {
     #[error("Format {0:?} is not renderable")]
     FormatNotRenderable(wgt::TextureFormat),
     #[error("Format {0:?} does not have a depth aspect, but depth test/write is enabled")]
@@ -380,13 +406,29 @@ pub enum DepthStencilStateError {
     InvalidSampleCount(u32, wgt::TextureFormat, Vec<u32>, Vec<u32>),
 }
 
+error_proxy! {
+    pub struct CreateRenderPipelineError {
+        kind: CreateRenderPipelineErrorKind,
+    }
+}
+
+impl CreateRenderPipelineError {
+    #[doc(hidden)]
+    pub fn as_shader_error(&self) -> Option<(wgt::ShaderStages, impl fmt::Display + '_)> {
+        match self.kind {
+            CreateRenderPipelineErrorKind::Internal { stage, ref error } => Some((stage, error)),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateRenderPipelineError {
+pub(crate) enum CreateRenderPipelineErrorKind {
     #[error(transparent)]
-    ColorAttachment(#[from] ColorAttachmentError),
+    ColorAttachment(#[from] ColorAttachmentErrorKind),
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Pipeline layout is invalid")]
     InvalidLayout,
     #[error("Unable to derive an implicit layout")]
@@ -430,7 +472,7 @@ pub enum CreateRenderPipelineError {
     Stage {
         stage: wgt::ShaderStages,
         #[source]
-        error: validation::StageError,
+        error: validation::StageErrorKind,
     },
     #[error("Internal error in {stage:?} shader: {error}")]
     Internal {

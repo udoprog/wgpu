@@ -1,4 +1,4 @@
-use crate::device::DeviceError;
+use crate::device::DeviceErrorKind;
 use crate::resource::Resource;
 use crate::snatch::SnatchGuard;
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
         bind::Binder,
         end_pipeline_statistics_query,
         memory_init::{fixup_discarded_surfaces, SurfacesInDiscardState},
-        BasePass, BasePassRef, BindGroupStateChange, CommandBuffer, CommandEncoderError,
+        BasePass, BasePassRef, BindGroupStateChange, CommandBuffer, CommandEncoderErrorKind,
         CommandEncoderStatus, MapPassErr, PassErrorScope, QueryUseError, StateChange,
     },
     device::{MissingDownlevelFlags, MissingFeatures},
@@ -171,7 +171,7 @@ pub struct ComputePassDescriptor<'a> {
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum DispatchError {
+pub(crate) enum DispatchError {
     #[error("Compute pipeline must be set")]
     MissingPipeline,
     #[error("Incompatible bind group at index {index} in the current compute pipeline")]
@@ -186,11 +186,11 @@ pub enum DispatchError {
 
 /// Error encountered when performing a compute pass.
 #[derive(Clone, Debug, Error)]
-pub enum ComputePassErrorInner {
+pub(crate) enum ComputePassErrorInner {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error(transparent)]
-    Encoder(#[from] CommandEncoderError),
+    Encoder(#[from] CommandEncoderErrorKind),
     #[error("Bind group at index {0:?} is invalid")]
     InvalidBindGroup(usize),
     #[error("Device {0:?} is invalid")]

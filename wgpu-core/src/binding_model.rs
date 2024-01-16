@@ -2,7 +2,7 @@
 use crate::device::trace;
 use crate::{
     device::{
-        bgl, Device, DeviceError, MissingDownlevelFlags, MissingFeatures, SHADER_STAGE_COUNT,
+        bgl, Device, DeviceErrorKind, MissingDownlevelFlags, MissingFeatures, SHADER_STAGE_COUNT,
     },
     error::{ErrorFormatter, PrettyError},
     hal_api::HalApi,
@@ -32,7 +32,7 @@ use thiserror::Error;
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum BindGroupLayoutEntryError {
+pub(crate) enum BindGroupLayoutEntryError {
     #[error("Cube dimension is not expected for texture storage")]
     StorageTextureCube,
     #[error("Read-write and read-only storage textures are not allowed by webgpu, they require the native only feature TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES")]
@@ -47,11 +47,17 @@ pub enum BindGroupLayoutEntryError {
     MissingDownlevelFlags(#[from] MissingDownlevelFlags),
 }
 
+error_proxy! {
+    pub struct CreateBindGroupLayoutError {
+        kind: CreateBindGroupLayoutErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateBindGroupLayoutError {
+pub(crate) enum CreateBindGroupLayoutErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Conflicting binding at index {0}")]
     ConflictBinding(u32),
     #[error("Binding {binding} entry is invalid")]
@@ -70,11 +76,44 @@ pub enum CreateBindGroupLayoutError {
 
 //TODO: refactor this to move out `enum BindingError`.
 
+error_proxy! {
+    pub struct CreateBindGroupError {
+        pub(crate) kind: CreateBindGroupErrorKind,
+    }
+}
+
+impl PrettyError for CreateBindGroupError {
+    fn fmt_pretty(&self, fmt: &mut ErrorFormatter) {
+        fmt.error(&self.kind);
+        match self.kind {
+            CreateBindGroupErrorKind::BindingZeroSize(id) => {
+                fmt.buffer_label(&id);
+            }
+            CreateBindGroupErrorKind::BindingRangeTooLarge { buffer, .. } => {
+                fmt.buffer_label(&buffer);
+            }
+            CreateBindGroupErrorKind::BindingSizeTooSmall { buffer, .. } => {
+                fmt.buffer_label(&buffer);
+            }
+            CreateBindGroupErrorKind::InvalidBuffer(id) => {
+                fmt.buffer_label(&id);
+            }
+            CreateBindGroupErrorKind::InvalidTextureView(id) => {
+                fmt.texture_view_label(&id);
+            }
+            CreateBindGroupErrorKind::InvalidSampler(id) => {
+                fmt.sampler_label(&id);
+            }
+            _ => {}
+        };
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateBindGroupError {
+pub(crate) enum CreateBindGroupErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Bind group layout is invalid")]
     InvalidLayout,
     #[error("Buffer {0:?} is invalid or destroyed")]
@@ -186,35 +225,8 @@ pub enum CreateBindGroupError {
     ResourceUsageConflict(#[from] UsageConflict),
 }
 
-impl PrettyError for CreateBindGroupError {
-    fn fmt_pretty(&self, fmt: &mut ErrorFormatter) {
-        fmt.error(self);
-        match *self {
-            Self::BindingZeroSize(id) => {
-                fmt.buffer_label(&id);
-            }
-            Self::BindingRangeTooLarge { buffer, .. } => {
-                fmt.buffer_label(&buffer);
-            }
-            Self::BindingSizeTooSmall { buffer, .. } => {
-                fmt.buffer_label(&buffer);
-            }
-            Self::InvalidBuffer(id) => {
-                fmt.buffer_label(&id);
-            }
-            Self::InvalidTextureView(id) => {
-                fmt.texture_view_label(&id);
-            }
-            Self::InvalidSampler(id) => {
-                fmt.sampler_label(&id);
-            }
-            _ => {}
-        };
-    }
-}
-
 #[derive(Clone, Debug, Error)]
-pub enum BindingZone {
+pub(crate) enum BindingZone {
     #[error("Stage {0:?}")]
     Stage(wgt::ShaderStages),
     #[error("Whole pipeline")]
@@ -224,14 +236,14 @@ pub enum BindingZone {
 #[derive(Clone, Debug, Error)]
 #[error("Too many bindings of type {kind:?} in {zone}, limit is {limit}, count was {count}")]
 pub struct BindingTypeMaxCountError {
-    pub kind: BindingTypeMaxCountErrorKind,
-    pub zone: BindingZone,
-    pub limit: u32,
-    pub count: u32,
+    kind: BindingTypeMaxCountErrorKind,
+    zone: BindingZone,
+    limit: u32,
+    count: u32,
 }
 
 #[derive(Clone, Debug)]
-pub enum BindingTypeMaxCountErrorKind {
+pub(super) enum BindingTypeMaxCountErrorKind {
     DynamicUniformBuffers,
     DynamicStorageBuffers,
     SampledTextures,
@@ -506,11 +518,26 @@ impl<A: HalApi> BindGroupLayout<A> {
     }
 }
 
+error_proxy! {
+    pub struct CreatePipelineLayoutError {
+        pub(crate) kind: CreatePipelineLayoutErrorKind,
+    }
+}
+
+impl PrettyError for CreatePipelineLayoutError {
+    fn fmt_pretty(&self, fmt: &mut ErrorFormatter) {
+        fmt.error(&self.kind);
+        if let CreatePipelineLayoutErrorKind::InvalidBindGroupLayout(id) = self.kind {
+            fmt.bind_group_layout_label(&id);
+        };
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreatePipelineLayoutError {
+pub(crate) enum CreatePipelineLayoutErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Bind group layout {0:?} is invalid")]
     InvalidBindGroupLayout(BindGroupLayoutId),
     #[error(
@@ -538,18 +565,9 @@ pub enum CreatePipelineLayoutError {
     TooManyGroups { actual: usize, max: usize },
 }
 
-impl PrettyError for CreatePipelineLayoutError {
-    fn fmt_pretty(&self, fmt: &mut ErrorFormatter) {
-        fmt.error(self);
-        if let Self::InvalidBindGroupLayout(id) = *self {
-            fmt.bind_group_layout_label(&id);
-        };
-    }
-}
-
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum PushConstantUploadError {
+pub(crate) enum PushConstantUploadError {
     #[error("Provided push constant with indices {offset}..{end_offset} overruns matching push constant range at index {idx}, with stage(s) {:?} and indices {:?}", range.stages, range.range)]
     TooLarge {
         offset: u32,
@@ -758,7 +776,7 @@ pub enum BindingResource<'a> {
 
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum BindError {
+pub(crate) enum BindError {
     #[error(
         "Bind group {group} expects {expected} dynamic offset{s0}. However {actual} dynamic offset{s1} were provided.",
         s0 = if *.expected >= 2 { "s" } else { "" },
@@ -937,9 +955,15 @@ impl<A: HalApi> Resource<BindGroupId> for BindGroup<A> {
     }
 }
 
+error_proxy! {
+    pub struct GetBindGroupLayoutError {
+        kind: GetBindGroupLayoutErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum GetBindGroupLayoutError {
+pub(crate) enum GetBindGroupLayoutErrorKind {
     #[error("Pipeline is invalid")]
     InvalidPipeline,
     #[error("Invalid group index {0}")]

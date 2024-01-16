@@ -70,18 +70,21 @@ impl EntryMap {
         for entry in entries {
             if entry.binding > device_limits.max_bindings_per_bind_group {
                 return Err(
-                    binding_model::CreateBindGroupLayoutError::InvalidBindingIndex {
+                    binding_model::CreateBindGroupLayoutErrorKind::InvalidBindingIndex {
                         binding: entry.binding,
                         maximum: device_limits.max_bindings_per_bind_group,
-                    },
+                    }
+                    .into(),
                 );
             }
             if inner.insert(entry.binding, *entry).is_some() {
-                return Err(binding_model::CreateBindGroupLayoutError::ConflictBinding(
-                    entry.binding,
-                ));
+                return Err(
+                    binding_model::CreateBindGroupLayoutErrorKind::ConflictBinding(entry.binding)
+                        .into(),
+                );
             }
         }
+
         inner.sort_unstable_keys();
 
         Ok(Self {

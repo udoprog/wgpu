@@ -7,14 +7,14 @@ use std::error::Error;
 use std::fmt;
 use wgpu_core::binding_model::CreateBindGroupError;
 use wgpu_core::binding_model::CreateBindGroupLayoutError;
-use wgpu_core::binding_model::CreatePipelineLayoutError;
+use wgpu_core::binding_model::CreatePipelineLayoutErrorKind;
 use wgpu_core::binding_model::GetBindGroupLayoutError;
-use wgpu_core::command::ClearError;
+use wgpu_core::command::ClearErrorKind;
 use wgpu_core::command::CommandEncoderError;
 use wgpu_core::command::ComputePassError;
 use wgpu_core::command::CopyError;
 use wgpu_core::command::CreateRenderBundleError;
-use wgpu_core::command::QueryError;
+use wgpu_core::command::QueryErrorKind;
 use wgpu_core::command::RenderBundleError;
 use wgpu_core::command::RenderPassError;
 use wgpu_core::device::queue::QueueSubmitError;
@@ -24,13 +24,13 @@ use wgpu_core::pipeline::CreateComputePipelineError;
 use wgpu_core::pipeline::CreateRenderPipelineError;
 use wgpu_core::pipeline::CreateShaderModuleError;
 #[cfg(feature = "surface")]
-use wgpu_core::present::ConfigureSurfaceError;
+use wgpu_core::present::ConfigureSurfaceErrorKind;
 use wgpu_core::resource::BufferAccessError;
 use wgpu_core::resource::CreateBufferError;
-use wgpu_core::resource::CreateQuerySetError;
-use wgpu_core::resource::CreateSamplerError;
+use wgpu_core::resource::CreateQuerySetErrorKind;
+use wgpu_core::resource::CreateSamplerErrorKind;
 use wgpu_core::resource::CreateTextureError;
-use wgpu_core::resource::CreateTextureViewError;
+use wgpu_core::resource::CreateTextureViewErrorKind;
 
 fn fmt_err(err: &(dyn Error + 'static)) -> String {
     let mut output = err.to_string();
@@ -127,10 +127,10 @@ impl From<CreateBindGroupLayoutError> for WebGpuError {
     }
 }
 
-impl From<CreatePipelineLayoutError> for WebGpuError {
-    fn from(err: CreatePipelineLayoutError) -> Self {
+impl From<CreatePipelineLayoutErrorKind> for WebGpuError {
+    fn from(err: CreatePipelineLayoutErrorKind) -> Self {
         match err {
-            CreatePipelineLayoutError::Device(err) => err.into(),
+            CreatePipelineLayoutErrorKind::Device(err) => err.into(),
             err => WebGpuError::Validation(fmt_err(&err)),
         }
     }
@@ -169,8 +169,8 @@ impl From<CommandEncoderError> for WebGpuError {
     }
 }
 
-impl From<QueryError> for WebGpuError {
-    fn from(err: QueryError) -> Self {
+impl From<QueryErrorKind> for WebGpuError {
+    fn from(err: QueryErrorKind) -> Self {
         WebGpuError::Validation(fmt_err(&err))
     }
 }
@@ -211,10 +211,10 @@ impl From<RenderPassError> for WebGpuError {
     }
 }
 
-impl From<CreateSamplerError> for WebGpuError {
-    fn from(err: CreateSamplerError) -> Self {
+impl From<CreateSamplerErrorKind> for WebGpuError {
+    fn from(err: CreateSamplerErrorKind) -> Self {
         match err {
-            CreateSamplerError::Device(err) => err.into(),
+            CreateSamplerErrorKind::Device(err) => err.into(),
             err => WebGpuError::Validation(fmt_err(&err)),
         }
     }
@@ -238,16 +238,16 @@ impl From<CreateTextureError> for WebGpuError {
     }
 }
 
-impl From<CreateTextureViewError> for WebGpuError {
-    fn from(err: CreateTextureViewError) -> Self {
+impl From<CreateTextureViewErrorKind> for WebGpuError {
+    fn from(err: CreateTextureViewErrorKind) -> Self {
         WebGpuError::Validation(fmt_err(&err))
     }
 }
 
-impl From<CreateQuerySetError> for WebGpuError {
-    fn from(err: CreateQuerySetError) -> Self {
+impl From<CreateQuerySetErrorKind> for WebGpuError {
+    fn from(err: CreateQuerySetErrorKind) -> Self {
         match err {
-            CreateQuerySetError::Device(err) => err.into(),
+            CreateQuerySetErrorKind::Device(err) => err.into(),
             err => WebGpuError::Validation(fmt_err(&err)),
         }
     }
@@ -271,15 +271,15 @@ impl From<QueueWriteError> for WebGpuError {
     }
 }
 
-impl From<ClearError> for WebGpuError {
-    fn from(err: ClearError) -> Self {
+impl From<ClearErrorKind> for WebGpuError {
+    fn from(err: ClearErrorKind) -> Self {
         WebGpuError::Validation(fmt_err(&err))
     }
 }
 
 #[cfg(feature = "surface")]
-impl From<ConfigureSurfaceError> for WebGpuError {
-    fn from(err: ConfigureSurfaceError) -> Self {
+impl From<ConfigureSurfaceErrorKind> for WebGpuError {
+    fn from(err: ConfigureSurfaceErrorKind) -> Self {
         WebGpuError::Validation(fmt_err(&err))
     }
 }

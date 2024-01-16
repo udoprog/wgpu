@@ -3,8 +3,8 @@ use hal::CommandEncoder as _;
 #[cfg(feature = "trace")]
 use crate::device::trace::Command as TraceCommand;
 use crate::{
-    command::{CommandBuffer, CommandEncoderError},
-    device::DeviceError,
+    command::{CommandBuffer, CommandEncoderErrorKind},
+    device::DeviceErrorKind,
     global::Global,
     hal_api::HalApi,
     id::{self, Id, TypedId},
@@ -101,14 +101,20 @@ impl From<wgt::QueryType> for SimplifiedQueryType {
     }
 }
 
+error_proxy! {
+    pub struct QueryError {
+        pub(crate) kind: QueryErrorKind,
+    }
+}
+
 /// Error encountered when dealing with queries
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum QueryError {
+pub(crate) enum QueryErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error(transparent)]
-    Encoder(#[from] CommandEncoderError),
+    Encoder(#[from] CommandEncoderErrorKind),
     #[error("Error encountered while trying to use queries")]
     Use(#[from] QueryUseError),
     #[error("Error encountered while trying to resolve a query")]
@@ -121,11 +127,11 @@ pub enum QueryError {
 
 impl crate::error::PrettyError for QueryError {
     fn fmt_pretty(&self, fmt: &mut crate::error::ErrorFormatter) {
-        fmt.error(self);
-        match *self {
-            Self::InvalidBuffer(id) => fmt.buffer_label(&id),
-            Self::InvalidQuerySet(id) => fmt.query_set_label(&id),
+        fmt.error(&self.kind);
 
+        match self.kind {
+            QueryErrorKind::InvalidBuffer(id) => fmt.buffer_label(&id),
+            QueryErrorKind::InvalidQuerySet(id) => fmt.query_set_label(&id),
             _ => {}
         }
     }
@@ -376,7 +382,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let query_set = tracker
             .query_sets
             .add_single(&*query_set_guard, query_set_id)
-            .ok_or(QueryError::InvalidQuerySet(query_set_id))?;
+            .ok_or(QueryErrorKind::InvalidQuerySet(query_set_id))?;
 
         query_set.validate_and_write_timestamp(raw_encoder, query_set_id, query_index, None)?;
 
@@ -415,23 +421,23 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let raw_encoder = encoder.open()?;
 
         if destination_offset % wgt::QUERY_RESOLVE_BUFFER_ALIGNMENT != 0 {
-            return Err(QueryError::Resolve(ResolveError::BufferOffsetAlignment));
+            return Err(ResolveError::BufferOffsetAlignment.into());
         }
         let query_set_guard = hub.query_sets.read();
         let query_set = tracker
             .query_sets
             .add_single(&*query_set_guard, query_set_id)
-            .ok_or(QueryError::InvalidQuerySet(query_set_id))?;
+            .ok_or(QueryErrorKind::InvalidQuerySet(query_set_id))?;
 
         let (dst_buffer, dst_pending) = {
             let buffer_guard = hub.buffers.read();
             let dst_buffer = buffer_guard
                 .get(destination)
-                .map_err(|_| QueryError::InvalidBuffer(destination))?;
+                .map_err(|_| QueryErrorKind::InvalidBuffer(destination))?;
             tracker
                 .buffers
                 .set_single(dst_buffer, hal::BufferUses::COPY_DST)
-                .ok_or(QueryError::InvalidBuffer(destination))?
+                .ok_or(QueryErrorKind::InvalidBuffer(destination))?
         };
 
         let snatch_guard = dst_buffer.device.snatchable_lock.read();
@@ -484,7 +490,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         let raw_dst_buffer = dst_buffer
             .raw(&snatch_guard)
-            .ok_or(QueryError::InvalidBuffer(destination))?;
+            .ok_or(QueryErrorKind::InvalidBuffer(destination))?;
 
         unsafe {
             raw_encoder.transition_buffers(dst_barrier.into_iter());

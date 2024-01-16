@@ -83,12 +83,12 @@ use crate::device::trace;
 use crate::{
     binding_model::{buffer_binding_type_alignment, BindGroup, BindGroupLayout, PipelineLayout},
     command::{
-        BasePass, BindGroupStateChange, ColorAttachmentError, DrawError, MapPassErr,
+        BasePass, BindGroupStateChange, ColorAttachmentErrorKind, DrawError, MapPassErr,
         PassErrorScope, RenderCommand, RenderCommandError, StateChange,
     },
     conv,
     device::{
-        AttachmentData, Device, DeviceError, MissingDownlevelFlags,
+        AttachmentData, Device, DeviceErrorKind, MissingDownlevelFlags,
         RenderPassCompatibilityCheckType, RenderPassContext, SHADER_STAGE_COUNT,
     },
     error::{ErrorFormatter, PrettyError},
@@ -184,12 +184,13 @@ impl RenderBundleEncoder {
             context: RenderPassContext {
                 attachments: AttachmentData {
                     colors: if desc.color_formats.len() > hal::MAX_COLOR_ATTACHMENTS {
-                        return Err(CreateRenderBundleError::ColorAttachment(
-                            ColorAttachmentError::TooMany {
+                        return Err(CreateRenderBundleErrorKind::ColorAttachment(
+                            ColorAttachmentErrorKind::TooMany {
                                 given: desc.color_formats.len(),
                                 limit: hal::MAX_COLOR_ATTACHMENTS,
                             },
-                        ));
+                        )
+                        .into());
                     } else {
                         desc.color_formats.iter().cloned().collect()
                     },
@@ -199,7 +200,7 @@ impl RenderBundleEncoder {
                 sample_count: {
                     let sc = desc.sample_count;
                     if sc == 0 || sc > 32 || !conv::is_power_of_two_u32(sc) {
-                        return Err(CreateRenderBundleError::InvalidSampleCount(sc));
+                        return Err(CreateRenderBundleErrorKind::InvalidSampleCount(sc).into());
                     }
                     sc
                 },
@@ -709,12 +710,18 @@ impl RenderBundleEncoder {
     }
 }
 
+error_proxy! {
+    pub struct CreateRenderBundleError {
+        kind: CreateRenderBundleErrorKind,
+    }
+}
+
 /// Error type returned from `RenderBundleEncoder::new` if the sample count is invalid.
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CreateRenderBundleError {
+pub(crate) enum CreateRenderBundleErrorKind {
     #[error(transparent)]
-    ColorAttachment(#[from] ColorAttachmentError),
+    ColorAttachment(#[from] ColorAttachmentErrorKind),
     #[error("Invalid number of samples {0}")]
     InvalidSampleCount(u32),
 }
@@ -722,7 +729,7 @@ pub enum CreateRenderBundleError {
 /// Error type returned from `RenderBundleEncoder::new` if the sample count is invalid.
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum ExecutionError {
+pub(crate) enum ExecutionError {
     #[error("Buffer {0:?} is destroyed")]
     DestroyedBuffer(id::BufferId),
     #[error("BindGroup {0:?} is invalid")]
@@ -730,6 +737,7 @@ pub enum ExecutionError {
     #[error("Using {0} in a render bundle is not implemented")]
     Unimplemented(&'static str),
 }
+
 impl PrettyError for ExecutionError {
     fn fmt_pretty(&self, fmt: &mut ErrorFormatter) {
         fmt.error(self);
@@ -1422,7 +1430,7 @@ pub(super) enum RenderBundleErrorInner {
     #[error("Resource is not valid to use with this render bundle because the resource and the bundle come from different devices")]
     NotValidToUse,
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error(transparent)]
     RenderCommand(RenderCommandError),
     #[error(transparent)]
@@ -1452,7 +1460,7 @@ pub struct RenderBundleError {
 impl RenderBundleError {
     pub(crate) const INVALID_DEVICE: Self = RenderBundleError {
         scope: PassErrorScope::Bundle,
-        inner: RenderBundleErrorInner::Device(DeviceError::Invalid),
+        inner: RenderBundleErrorInner::Device(DeviceErrorKind::Invalid),
     };
 }
 impl PrettyError for RenderBundleError {

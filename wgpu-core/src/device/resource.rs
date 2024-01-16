@@ -3,7 +3,7 @@ use crate::device::trace;
 use crate::{
     binding_model::{self, BindGroupLayout, BindGroupLayoutEntryError},
     command, conv,
-    device::life::{LifetimeTracker, WaitIdleError},
+    device::life::{LifetimeTracker, WaitIdleErrorKind},
     device::queue::PendingWrites,
     device::{
         bgl, AttachmentData, CommandAllocator, DeviceLostInvocation, MissingDownlevelFlags,
@@ -55,8 +55,8 @@ use std::{
 use super::{
     life::{self, ResourceMaps},
     queue::{self},
-    DeviceDescriptor, DeviceError, ImplicitPipelineContext, UserClosures, ENTRYPOINT_FAILURE_ERROR,
-    IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL, ZERO_BUFFER_SIZE,
+    DeviceDescriptor, DeviceErrorKind, ImplicitPipelineContext, UserClosures,
+    ENTRYPOINT_FAILURE_ERROR, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL, ZERO_BUFFER_SIZE,
 };
 
 /// Structure describing a logical device. Some members are internally mutable,
@@ -161,11 +161,11 @@ impl<A: HalApi> Drop for Device<A> {
 }
 
 #[derive(Clone, Debug, Error)]
-pub enum CreateDeviceError {
+pub(crate) enum CreateDeviceError {
     #[error("Not enough memory left to create device")]
     OutOfMemory,
     #[error("Failed to create internal buffer for initializing textures")]
-    FailedToCreateZeroBuffer(#[from] DeviceError),
+    FailedToCreateZeroBuffer(#[from] DeviceErrorKind),
 }
 
 impl<A: HalApi> Device<A> {
@@ -225,7 +225,7 @@ impl<A: HalApi> Device<A> {
                     usage: hal::BufferUses::COPY_SRC | hal::BufferUses::COPY_DST,
                     memory_flags: hal::MemoryFlags::empty(),
                 })
-                .map_err(DeviceError::from)?
+                .map_err(DeviceErrorKind::from)?
         };
         pending_writes.activate();
         unsafe {
@@ -317,7 +317,7 @@ impl<A: HalApi> Device<A> {
         &'this self,
         fence: &A::Fence,
         maintain: wgt::Maintain<queue::WrappedSubmissionIndex>,
-    ) -> Result<(UserClosures, bool), WaitIdleError> {
+    ) -> Result<(UserClosures, bool), WaitIdleErrorKind> {
         profiling::scope!("Device::maintain");
         let last_done_index = if maintain.is_wait() {
             let index_to_wait_for = match maintain {
@@ -333,7 +333,7 @@ impl<A: HalApi> Device<A> {
                     .as_ref()
                     .unwrap()
                     .wait(fence, index_to_wait_for, CLEANUP_WAIT_MS)
-                    .map_err(DeviceError::from)?
+                    .map_err(DeviceErrorKind::from)?
             };
             index_to_wait_for
         } else {
@@ -342,7 +342,7 @@ impl<A: HalApi> Device<A> {
                     .as_ref()
                     .unwrap()
                     .get_fence_value(fence)
-                    .map_err(DeviceError::from)?
+                    .map_err(DeviceErrorKind::from)?
             }
         };
 
@@ -475,11 +475,11 @@ impl<A: HalApi> Device<A> {
         self: &Arc<Self>,
         desc: &resource::BufferDescriptor,
         transient: bool,
-    ) -> Result<Buffer<A>, resource::CreateBufferError> {
+    ) -> Result<Buffer<A>, resource::CreateBufferErrorKind> {
         debug_assert_eq!(self.as_info().id().backend(), A::VARIANT);
 
         if desc.size > self.limits.max_buffer_size {
-            return Err(resource::CreateBufferError::MaxBufferSize {
+            return Err(resource::CreateBufferErrorKind::MaxBufferSize {
                 requested: desc.size,
                 maximum: self.limits.max_buffer_size,
             });
@@ -499,7 +499,7 @@ impl<A: HalApi> Device<A> {
         let mut usage = conv::map_buffer_usage(desc.usage);
 
         if desc.usage.is_empty() || desc.usage.contains_invalid_bits() {
-            return Err(resource::CreateBufferError::InvalidUsage(desc.usage));
+            return Err(resource::CreateBufferErrorKind::InvalidUsage(desc.usage));
         }
 
         if !self
@@ -512,13 +512,13 @@ impl<A: HalApi> Device<A> {
             let read_mismatch = desc.usage.contains(Bu::MAP_READ)
                 && !(Bu::MAP_READ | Bu::COPY_DST).contains(desc.usage);
             if write_mismatch || read_mismatch {
-                return Err(resource::CreateBufferError::UsageMismatch(desc.usage));
+                return Err(resource::CreateBufferErrorKind::UsageMismatch(desc.usage));
             }
         }
 
         if desc.mapped_at_creation {
             if desc.size % wgt::COPY_BUFFER_ALIGNMENT != 0 {
-                return Err(resource::CreateBufferError::UnalignedSize);
+                return Err(resource::CreateBufferErrorKind::UnalignedSize);
             }
             if !desc.usage.contains(wgt::BufferUsages::MAP_WRITE) {
                 // we are going to be copying into it, internally
@@ -555,7 +555,8 @@ impl<A: HalApi> Device<A> {
             usage,
             memory_flags,
         };
-        let buffer = unsafe { self.raw().create_buffer(&hal_desc) }.map_err(DeviceError::from)?;
+        let buffer =
+            unsafe { self.raw().create_buffer(&hal_desc) }.map_err(DeviceErrorKind::from)?;
 
         Ok(Buffer {
             raw: Snatchable::new(buffer),
@@ -621,11 +622,11 @@ impl<A: HalApi> Device<A> {
         self: &Arc<Self>,
         adapter: &Adapter<A>,
         desc: &resource::TextureDescriptor,
-    ) -> Result<Texture<A>, resource::CreateTextureError> {
-        use resource::{CreateTextureError, TextureDimensionError};
+    ) -> Result<Texture<A>, resource::CreateTextureErrorKind> {
+        use resource::{CreateTextureErrorKind, TextureDimensionError};
 
         if desc.usage.is_empty() || desc.usage.contains_invalid_bits() {
-            return Err(CreateTextureError::InvalidUsage(desc.usage));
+            return Err(CreateTextureErrorKind::InvalidUsage(desc.usage));
         }
 
         conv::check_texture_dimension_size(
@@ -638,14 +639,14 @@ impl<A: HalApi> Device<A> {
         if desc.dimension != wgt::TextureDimension::D2 {
             // Depth textures can only be 2D
             if desc.format.is_depth_stencil_format() {
-                return Err(CreateTextureError::InvalidDepthDimension(
+                return Err(CreateTextureErrorKind::InvalidDepthDimension(
                     desc.dimension,
                     desc.format,
                 ));
             }
             // Renderable textures can only be 2D
             if desc.usage.contains(wgt::TextureUsages::RENDER_ATTACHMENT) {
-                return Err(CreateTextureError::InvalidDimensionUsages(
+                return Err(CreateTextureErrorKind::InvalidDimensionUsages(
                     wgt::TextureUsages::RENDER_ATTACHMENT,
                     desc.dimension,
                 ));
@@ -653,7 +654,7 @@ impl<A: HalApi> Device<A> {
 
             // Compressed textures can only be 2D
             if desc.format.is_compressed() {
-                return Err(CreateTextureError::InvalidCompressedDimension(
+                return Err(CreateTextureErrorKind::InvalidCompressedDimension(
                     desc.dimension,
                     desc.format,
                 ));
@@ -664,7 +665,7 @@ impl<A: HalApi> Device<A> {
             let (block_width, block_height) = desc.format.block_dimensions();
 
             if desc.size.width % block_width != 0 {
-                return Err(CreateTextureError::InvalidDimension(
+                return Err(CreateTextureErrorKind::InvalidDimension(
                     TextureDimensionError::NotMultipleOfBlockWidth {
                         width: desc.size.width,
                         block_width,
@@ -674,7 +675,7 @@ impl<A: HalApi> Device<A> {
             }
 
             if desc.size.height % block_height != 0 {
-                return Err(CreateTextureError::InvalidDimension(
+                return Err(CreateTextureErrorKind::InvalidDimension(
                     TextureDimensionError::NotMultipleOfBlockHeight {
                         height: desc.size.height,
                         block_height,
@@ -688,7 +689,7 @@ impl<A: HalApi> Device<A> {
             let (width_multiple, height_multiple) = desc.format.size_multiple_requirement();
 
             if desc.size.width % width_multiple != 0 {
-                return Err(CreateTextureError::InvalidDimension(
+                return Err(CreateTextureErrorKind::InvalidDimension(
                     TextureDimensionError::WidthNotMultipleOf {
                         width: desc.size.width,
                         multiple: width_multiple,
@@ -698,7 +699,7 @@ impl<A: HalApi> Device<A> {
             }
 
             if desc.size.height % height_multiple != 0 {
-                return Err(CreateTextureError::InvalidDimension(
+                return Err(CreateTextureErrorKind::InvalidDimension(
                     TextureDimensionError::HeightNotMultipleOf {
                         height: desc.size.height,
                         multiple: height_multiple,
@@ -710,18 +711,18 @@ impl<A: HalApi> Device<A> {
 
         let format_features = self
             .describe_format_features(adapter, desc.format)
-            .map_err(|error| CreateTextureError::MissingFeatures(desc.format, error))?;
+            .map_err(|error| CreateTextureErrorKind::MissingFeatures(desc.format, error))?;
 
         if desc.sample_count > 1 {
             if desc.mip_level_count != 1 {
-                return Err(CreateTextureError::InvalidMipLevelCount {
+                return Err(CreateTextureErrorKind::InvalidMipLevelCount {
                     requested: desc.mip_level_count,
                     maximum: 1,
                 });
             }
 
             if desc.size.depth_or_array_layers != 1 {
-                return Err(CreateTextureError::InvalidDimension(
+                return Err(CreateTextureErrorKind::InvalidDimension(
                     TextureDimensionError::MultisampledDepthOrArrayLayer(
                         desc.size.depth_or_array_layers,
                     ),
@@ -729,11 +730,11 @@ impl<A: HalApi> Device<A> {
             }
 
             if desc.usage.contains(wgt::TextureUsages::STORAGE_BINDING) {
-                return Err(CreateTextureError::InvalidMultisampledStorageBinding);
+                return Err(CreateTextureErrorKind::InvalidMultisampledStorageBinding);
             }
 
             if !desc.usage.contains(wgt::TextureUsages::RENDER_ATTACHMENT) {
-                return Err(CreateTextureError::MultisampledNotRenderAttachment);
+                return Err(CreateTextureErrorKind::MultisampledNotRenderAttachment);
             }
 
             if !format_features.flags.intersects(
@@ -742,14 +743,16 @@ impl<A: HalApi> Device<A> {
                     | wgt::TextureFormatFeatureFlags::MULTISAMPLE_X8
                     | wgt::TextureFormatFeatureFlags::MULTISAMPLE_X16,
             ) {
-                return Err(CreateTextureError::InvalidMultisampledFormat(desc.format));
+                return Err(CreateTextureErrorKind::InvalidMultisampledFormat(
+                    desc.format,
+                ));
             }
 
             if !format_features
                 .flags
                 .sample_count_supported(desc.sample_count)
             {
-                return Err(CreateTextureError::InvalidSampleCount(
+                return Err(CreateTextureErrorKind::InvalidSampleCount(
                     desc.sample_count,
                     desc.format,
                     desc.format
@@ -767,7 +770,7 @@ impl<A: HalApi> Device<A> {
         let mips = desc.mip_level_count;
         let max_levels_allowed = desc.size.max_mips(desc.dimension).min(hal::MAX_MIP_LEVELS);
         if mips == 0 || mips > max_levels_allowed {
-            return Err(CreateTextureError::InvalidMipLevelCount {
+            return Err(CreateTextureErrorKind::InvalidMipLevelCount {
                 requested: mips,
                 maximum: max_levels_allowed,
             });
@@ -781,7 +784,7 @@ impl<A: HalApi> Device<A> {
                 .guaranteed_format_features(self.features)
                 .allowed_usages;
             let wgpu_missing_usages = desc.usage - wgpu_allowed_usages;
-            return Err(CreateTextureError::InvalidFormatUsages(
+            return Err(CreateTextureErrorKind::InvalidFormatUsages(
                 missing_allowed_usages,
                 desc.format,
                 wgpu_missing_usages.is_empty(),
@@ -794,7 +797,10 @@ impl<A: HalApi> Device<A> {
                 continue;
             }
             if desc.format.remove_srgb_suffix() != format.remove_srgb_suffix() {
-                return Err(CreateTextureError::InvalidViewFormat(*format, desc.format));
+                return Err(CreateTextureErrorKind::InvalidViewFormat(
+                    *format,
+                    desc.format,
+                ));
             }
             hal_view_formats.push(*format);
         }
@@ -821,7 +827,7 @@ impl<A: HalApi> Device<A> {
                 .as_ref()
                 .unwrap()
                 .create_texture(&hal_desc)
-                .map_err(DeviceError::from)?
+                .map_err(DeviceErrorKind::from)?
         };
 
         let clear_mode = if hal_usage
@@ -863,7 +869,7 @@ impl<A: HalApi> Device<A> {
                             };
                             clear_views.push(Some(
                                 unsafe { self.raw().create_texture_view(&raw_texture, &desc) }
-                                    .map_err(DeviceError::from)?,
+                                    .map_err(DeviceErrorKind::from)?,
                             ));
                         };
                     }
@@ -897,12 +903,12 @@ impl<A: HalApi> Device<A> {
         self: &Arc<Self>,
         texture: &Arc<Texture<A>>,
         desc: &resource::TextureViewDescriptor,
-    ) -> Result<TextureView<A>, resource::CreateTextureViewError> {
+    ) -> Result<TextureView<A>, resource::CreateTextureViewErrorKind> {
         let snatch_guard = texture.device.snatchable_lock.read();
 
         let texture_raw = texture
             .raw(&snatch_guard)
-            .ok_or(resource::CreateTextureViewError::InvalidTexture)?;
+            .ok_or(resource::CreateTextureViewErrorKind::InvalidTexture)?;
 
         // resolve TextureViewDescriptor defaults
         // https://gpuweb.github.io/gpuweb/#abstract-opdef-resolving-gputextureviewdescriptor-defaults
@@ -955,7 +961,7 @@ impl<A: HalApi> Device<A> {
 
         let aspects = hal::FormatAspects::new(texture.desc.format, desc.range.aspect);
         if aspects.is_empty() {
-            return Err(resource::CreateTextureViewError::InvalidAspect {
+            return Err(resource::CreateTextureViewErrorKind::InvalidAspect {
                 texture_format: texture.desc.format,
                 requested_aspect: desc.range.aspect,
             });
@@ -972,16 +978,18 @@ impl<A: HalApi> Device<A> {
                     .aspect_specific_format(desc.range.aspect)
         };
         if !format_is_good {
-            return Err(resource::CreateTextureViewError::FormatReinterpretation {
-                texture: texture.desc.format,
-                view: resolved_format,
-            });
+            return Err(
+                resource::CreateTextureViewErrorKind::FormatReinterpretation {
+                    texture: texture.desc.format,
+                    view: resolved_format,
+                },
+            );
         }
 
         // check if multisampled texture is seen as anything but 2D
         if texture.desc.sample_count > 1 && resolved_dimension != wgt::TextureViewDimension::D2 {
             return Err(
-                resource::CreateTextureViewError::InvalidMultisampledTextureViewDimension(
+                resource::CreateTextureViewErrorKind::InvalidMultisampledTextureViewDimension(
                     resolved_dimension,
                 ),
             );
@@ -990,7 +998,7 @@ impl<A: HalApi> Device<A> {
         // check if the dimension is compatible with the texture
         if texture.desc.dimension != resolved_dimension.compatible_texture_dimension() {
             return Err(
-                resource::CreateTextureViewError::InvalidTextureViewDimension {
+                resource::CreateTextureViewErrorKind::InvalidTextureViewDimension {
                     view: resolved_dimension,
                     texture: texture.desc.dimension,
                 },
@@ -1000,16 +1008,18 @@ impl<A: HalApi> Device<A> {
         match resolved_dimension {
             TextureViewDimension::D1 | TextureViewDimension::D2 | TextureViewDimension::D3 => {
                 if resolved_array_layer_count != 1 {
-                    return Err(resource::CreateTextureViewError::InvalidArrayLayerCount {
-                        requested: resolved_array_layer_count,
-                        dim: resolved_dimension,
-                    });
+                    return Err(
+                        resource::CreateTextureViewErrorKind::InvalidArrayLayerCount {
+                            requested: resolved_array_layer_count,
+                            dim: resolved_dimension,
+                        },
+                    );
                 }
             }
             TextureViewDimension::Cube => {
                 if resolved_array_layer_count != 6 {
                     return Err(
-                        resource::CreateTextureViewError::InvalidCubemapTextureDepth {
+                        resource::CreateTextureViewErrorKind::InvalidCubemapTextureDepth {
                             depth: resolved_array_layer_count,
                         },
                     );
@@ -1018,7 +1028,7 @@ impl<A: HalApi> Device<A> {
             TextureViewDimension::CubeArray => {
                 if resolved_array_layer_count % 6 != 0 {
                     return Err(
-                        resource::CreateTextureViewError::InvalidCubemapArrayTextureDepth {
+                        resource::CreateTextureViewErrorKind::InvalidCubemapArrayTextureDepth {
                             depth: resolved_array_layer_count,
                         },
                     );
@@ -1030,14 +1040,14 @@ impl<A: HalApi> Device<A> {
         match resolved_dimension {
             TextureViewDimension::Cube | TextureViewDimension::CubeArray => {
                 if texture.desc.size.width != texture.desc.size.height {
-                    return Err(resource::CreateTextureViewError::InvalidCubeTextureViewSize);
+                    return Err(resource::CreateTextureViewErrorKind::InvalidCubeTextureViewSize);
                 }
             }
             _ => {}
         }
 
         if resolved_mip_level_count == 0 {
-            return Err(resource::CreateTextureViewError::ZeroMipLevelCount);
+            return Err(resource::CreateTextureViewErrorKind::ZeroMipLevelCount);
         }
 
         let mip_level_end = desc
@@ -1047,14 +1057,14 @@ impl<A: HalApi> Device<A> {
 
         let level_end = texture.desc.mip_level_count;
         if mip_level_end > level_end {
-            return Err(resource::CreateTextureViewError::TooManyMipLevels {
+            return Err(resource::CreateTextureViewErrorKind::TooManyMipLevels {
                 requested: mip_level_end,
                 total: level_end,
             });
         }
 
         if resolved_array_layer_count == 0 {
-            return Err(resource::CreateTextureViewError::ZeroArrayLayerCount);
+            return Err(resource::CreateTextureViewErrorKind::ZeroArrayLayerCount);
         }
 
         let array_layer_end = desc
@@ -1064,7 +1074,7 @@ impl<A: HalApi> Device<A> {
 
         let layer_end = texture.desc.array_layer_count();
         if array_layer_end > layer_end {
-            return Err(resource::CreateTextureViewError::TooManyArrayLayers {
+            return Err(resource::CreateTextureViewErrorKind::TooManyArrayLayers {
                 requested: array_layer_end,
                 total: layer_end,
             });
@@ -1168,7 +1178,7 @@ impl<A: HalApi> Device<A> {
                 .as_ref()
                 .unwrap()
                 .create_texture_view(texture_raw, &hal_desc)
-                .map_err(|_| resource::CreateTextureViewError::OutOfMemory)?
+                .map_err(|_| resource::CreateTextureViewErrorKind::OutOfMemory)?
         };
 
         let selector = TextureSelector {
@@ -1197,7 +1207,7 @@ impl<A: HalApi> Device<A> {
     pub(crate) fn create_sampler(
         self: &Arc<Self>,
         desc: &resource::SamplerDescriptor,
-    ) -> Result<Sampler<A>, resource::CreateSamplerError> {
+    ) -> Result<Sampler<A>, resource::CreateSamplerErrorKind> {
         if desc
             .address_modes
             .iter()
@@ -1211,19 +1221,19 @@ impl<A: HalApi> Device<A> {
         }
 
         if desc.lod_min_clamp < 0.0 {
-            return Err(resource::CreateSamplerError::InvalidLodMinClamp(
+            return Err(resource::CreateSamplerErrorKind::InvalidLodMinClamp(
                 desc.lod_min_clamp,
             ));
         }
         if desc.lod_max_clamp < desc.lod_min_clamp {
-            return Err(resource::CreateSamplerError::InvalidLodMaxClamp {
+            return Err(resource::CreateSamplerErrorKind::InvalidLodMaxClamp {
                 lod_min_clamp: desc.lod_min_clamp,
                 lod_max_clamp: desc.lod_max_clamp,
             });
         }
 
         if desc.anisotropy_clamp < 1 {
-            return Err(resource::CreateSamplerError::InvalidAnisotropy(
+            return Err(resource::CreateSamplerErrorKind::InvalidAnisotropy(
                 desc.anisotropy_clamp,
             ));
         }
@@ -1231,7 +1241,7 @@ impl<A: HalApi> Device<A> {
         if desc.anisotropy_clamp != 1 {
             if !matches!(desc.min_filter, wgt::FilterMode::Linear) {
                 return Err(
-                    resource::CreateSamplerError::InvalidFilterModeWithAnisotropy {
+                    resource::CreateSamplerErrorKind::InvalidFilterModeWithAnisotropy {
                         filter_type: resource::SamplerFilterErrorType::MinFilter,
                         filter_mode: desc.min_filter,
                         anisotropic_clamp: desc.anisotropy_clamp,
@@ -1240,7 +1250,7 @@ impl<A: HalApi> Device<A> {
             }
             if !matches!(desc.mag_filter, wgt::FilterMode::Linear) {
                 return Err(
-                    resource::CreateSamplerError::InvalidFilterModeWithAnisotropy {
+                    resource::CreateSamplerErrorKind::InvalidFilterModeWithAnisotropy {
                         filter_type: resource::SamplerFilterErrorType::MagFilter,
                         filter_mode: desc.mag_filter,
                         anisotropic_clamp: desc.anisotropy_clamp,
@@ -1249,7 +1259,7 @@ impl<A: HalApi> Device<A> {
             }
             if !matches!(desc.mipmap_filter, wgt::FilterMode::Linear) {
                 return Err(
-                    resource::CreateSamplerError::InvalidFilterModeWithAnisotropy {
+                    resource::CreateSamplerErrorKind::InvalidFilterModeWithAnisotropy {
                         filter_type: resource::SamplerFilterErrorType::MipmapFilter,
                         filter_mode: desc.mipmap_filter,
                         anisotropic_clamp: desc.anisotropy_clamp,
@@ -1289,7 +1299,7 @@ impl<A: HalApi> Device<A> {
                 .as_ref()
                 .unwrap()
                 .create_sampler(&hal_desc)
-                .map_err(DeviceError::from)?
+                .map_err(DeviceErrorKind::from)?
         };
         Ok(Sampler {
             raw: Some(raw),
@@ -1305,13 +1315,13 @@ impl<A: HalApi> Device<A> {
         self: &Arc<Self>,
         desc: &pipeline::ShaderModuleDescriptor<'a>,
         source: pipeline::ShaderModuleSource<'a>,
-    ) -> Result<pipeline::ShaderModule<A>, pipeline::CreateShaderModuleError> {
+    ) -> Result<pipeline::ShaderModule<A>, pipeline::CreateShaderModuleErrorKind> {
         let (module, source) = match source {
             #[cfg(feature = "wgsl")]
             pipeline::ShaderModuleSource::Wgsl(code) => {
                 profiling::scope!("naga::wgsl::parse_str");
                 let module = naga::front::wgsl::parse_str(&code).map_err(|inner| {
-                    pipeline::CreateShaderModuleError::Parsing(pipeline::ShaderError {
+                    pipeline::CreateShaderModuleErrorKind::Parsing(pipeline::ShaderError {
                         source: code.to_string(),
                         label: desc.label.as_ref().map(|l| l.to_string()),
                         inner: Box::new(inner),
@@ -1325,7 +1335,7 @@ impl<A: HalApi> Device<A> {
         for (_, var) in module.global_variables.iter() {
             match var.binding {
                 Some(ref br) if br.group >= self.limits.max_bind_groups => {
-                    return Err(pipeline::CreateShaderModuleError::InvalidGroupIndex {
+                    return Err(pipeline::CreateShaderModuleErrorKind::InvalidGroupIndex {
                         bind: br.clone(),
                         group: br.group,
                         limit: self.limits.max_bind_groups,
@@ -1419,7 +1429,7 @@ impl<A: HalApi> Device<A> {
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), caps)
             .validate(&module)
             .map_err(|inner| {
-                pipeline::CreateShaderModuleError::Validation(pipeline::ShaderError {
+                pipeline::CreateShaderModuleErrorKind::Validation(pipeline::ShaderError {
                     source,
                     label: desc.label.as_ref().map(|l| l.to_string()),
                     inner: Box::new(inner),
@@ -1447,11 +1457,11 @@ impl<A: HalApi> Device<A> {
             Err(error) => {
                 return Err(match error {
                     hal::ShaderError::Device(error) => {
-                        pipeline::CreateShaderModuleError::Device(error.into())
+                        pipeline::CreateShaderModuleErrorKind::Device(error.into())
                     }
                     hal::ShaderError::Compilation(ref msg) => {
                         log::error!("Shader error: {}", msg);
-                        pipeline::CreateShaderModuleError::Generation
+                        pipeline::CreateShaderModuleErrorKind::Generation
                     }
                 })
             }
@@ -1471,7 +1481,7 @@ impl<A: HalApi> Device<A> {
         self: &Arc<Self>,
         desc: &pipeline::ShaderModuleDescriptor<'a>,
         source: &'a [u32],
-    ) -> Result<pipeline::ShaderModule<A>, pipeline::CreateShaderModuleError> {
+    ) -> Result<pipeline::ShaderModule<A>, pipeline::CreateShaderModuleErrorKind> {
         self.require_features(wgt::Features::SPIRV_SHADER_PASSTHROUGH)?;
         let hal_desc = hal::ShaderModuleDescriptor {
             label: desc.label.to_hal(self.instance_flags),
@@ -1488,11 +1498,11 @@ impl<A: HalApi> Device<A> {
             Err(error) => {
                 return Err(match error {
                     hal::ShaderError::Device(error) => {
-                        pipeline::CreateShaderModuleError::Device(error.into())
+                        pipeline::CreateShaderModuleErrorKind::Device(error.into())
                     }
                     hal::ShaderError::Compilation(ref msg) => {
                         log::error!("Shader error: {}", msg);
-                        pipeline::CreateShaderModuleError::Generation
+                        pipeline::CreateShaderModuleErrorKind::Generation
                     }
                 })
             }
@@ -1549,7 +1559,7 @@ impl<A: HalApi> Device<A> {
         label: &crate::Label,
         entry_map: bgl::EntryMap,
         origin: bgl::Origin,
-    ) -> Result<BindGroupLayout<A>, binding_model::CreateBindGroupLayoutError> {
+    ) -> Result<BindGroupLayout<A>, binding_model::CreateBindGroupLayoutErrorKind> {
         #[derive(PartialEq)]
         enum WritableStorage {
             Yes,
@@ -1600,7 +1610,7 @@ impl<A: HalApi> Device<A> {
                     sample_type: TextureSampleType::Float { filterable: true },
                     ..
                 } => {
-                    return Err(binding_model::CreateBindGroupLayoutError::Entry {
+                    return Err(binding_model::CreateBindGroupLayoutErrorKind::Entry {
                         binding: entry.binding,
                         error:
                             BindGroupLayoutEntryError::SampleTypeFloatFilterableBindingMultisampled,
@@ -1617,7 +1627,7 @@ impl<A: HalApi> Device<A> {
                 } => {
                     match view_dimension {
                         wgt::TextureViewDimension::Cube | wgt::TextureViewDimension::CubeArray => {
-                            return Err(binding_model::CreateBindGroupLayoutError::Entry {
+                            return Err(binding_model::CreateBindGroupLayoutErrorKind::Entry {
                                 binding: entry.binding,
                                 error: BindGroupLayoutEntryError::StorageTextureCube,
                             })
@@ -1631,7 +1641,7 @@ impl<A: HalApi> Device<A> {
                                 wgt::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                             ) =>
                         {
-                            return Err(binding_model::CreateBindGroupLayoutError::Entry {
+                            return Err(binding_model::CreateBindGroupLayoutErrorKind::Entry {
                                 binding: entry.binding,
                                 error: BindGroupLayoutEntryError::StorageTextureReadWrite,
                             });
@@ -1665,15 +1675,19 @@ impl<A: HalApi> Device<A> {
             if entry.count.is_some() {
                 required_features |= array_feature
                     .ok_or(BindGroupLayoutEntryError::ArrayUnsupported)
-                    .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
-                        binding: entry.binding,
-                        error,
-                    })?;
+                    .map_err(
+                        |error| binding_model::CreateBindGroupLayoutErrorKind::Entry {
+                            binding: entry.binding,
+                            error,
+                        },
+                    )?;
             }
 
             if entry.visibility.contains_invalid_bits() {
                 return Err(
-                    binding_model::CreateBindGroupLayoutError::InvalidVisibility(entry.visibility),
+                    binding_model::CreateBindGroupLayoutErrorKind::InvalidVisibility(
+                        entry.visibility,
+                    ),
                 );
             }
 
@@ -1697,16 +1711,20 @@ impl<A: HalApi> Device<A> {
 
             self.require_features(required_features)
                 .map_err(BindGroupLayoutEntryError::MissingFeatures)
-                .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
-                    binding: entry.binding,
-                    error,
-                })?;
+                .map_err(
+                    |error| binding_model::CreateBindGroupLayoutErrorKind::Entry {
+                        binding: entry.binding,
+                        error,
+                    },
+                )?;
             self.require_downlevel_flags(required_downlevel_flags)
                 .map_err(BindGroupLayoutEntryError::MissingDownlevelFlags)
-                .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
-                    binding: entry.binding,
-                    error,
-                })?;
+                .map_err(
+                    |error| binding_model::CreateBindGroupLayoutErrorKind::Entry {
+                        binding: entry.binding,
+                        error,
+                    },
+                )?;
         }
 
         let bgl_flags = conv::bind_group_layout_flags(self.features);
@@ -1723,7 +1741,7 @@ impl<A: HalApi> Device<A> {
                 .as_ref()
                 .unwrap()
                 .create_bind_group_layout(&hal_desc)
-                .map_err(DeviceError::from)?
+                .map_err(DeviceErrorKind::from)?
         };
 
         let mut count_validator = binding_model::BindingTypeMaxCountValidator::default();
@@ -1734,7 +1752,7 @@ impl<A: HalApi> Device<A> {
         // definitely going to violate limits too, lets catch it now.
         count_validator
             .validate(&self.limits)
-            .map_err(binding_model::CreateBindGroupLayoutError::TooManyBindings)?;
+            .map_err(binding_model::CreateBindGroupLayoutErrorKind::TooManyBindings)?;
 
         Ok(BindGroupLayout {
             raw: Some(raw),
@@ -1758,8 +1776,8 @@ impl<A: HalApi> Device<A> {
         storage: &'a Storage<Buffer<A>, id::BufferId>,
         limits: &wgt::Limits,
         snatch_guard: &'a SnatchGuard<'a>,
-    ) -> Result<hal::BufferBinding<'a, A>, binding_model::CreateBindGroupError> {
-        use crate::binding_model::CreateBindGroupError as Error;
+    ) -> Result<hal::BufferBinding<'a, A>, binding_model::CreateBindGroupErrorKind> {
+        use crate::binding_model::CreateBindGroupErrorKind as Error;
 
         let (binding_ty, dynamic, min_size) = match decl.ty {
             wgt::BindingType::Buffer {
@@ -1891,7 +1909,7 @@ impl<A: HalApi> Device<A> {
         pub_usage: wgt::TextureUsages,
         used: &mut BindGroupStates<A>,
         used_texture_ranges: &mut Vec<TextureInitTrackerAction<A>>,
-    ) -> Result<(), binding_model::CreateBindGroupError> {
+    ) -> Result<(), binding_model::CreateBindGroupErrorKind> {
         let texture = view.parent.read();
         let texture_id = texture.as_ref().unwrap().as_info().id();
         // Careful here: the texture may no longer have its own ref count,
@@ -1903,12 +1921,12 @@ impl<A: HalApi> Device<A> {
                 Some(view.selector.clone()),
                 internal_use,
             )
-            .ok_or(binding_model::CreateBindGroupError::InvalidTexture(
+            .ok_or(binding_model::CreateBindGroupErrorKind::InvalidTexture(
                 texture_id,
             ))?;
 
         if texture.device.as_info().id() != view.device.as_info().id() {
-            return Err(DeviceError::WrongDevice.into());
+            return Err(DeviceErrorKind::WrongDevice.into());
         }
 
         check_texture_usage(texture.desc.usage, pub_usage)?;
@@ -1935,8 +1953,8 @@ impl<A: HalApi> Device<A> {
         layout: &Arc<BindGroupLayout<A>>,
         desc: &binding_model::BindGroupDescriptor,
         hub: &Hub<A>,
-    ) -> Result<binding_model::BindGroup<A>, binding_model::CreateBindGroupError> {
-        use crate::binding_model::{BindingResource as Br, CreateBindGroupError as Error};
+    ) -> Result<binding_model::BindGroup<A>, binding_model::CreateBindGroupErrorKind> {
+        use crate::binding_model::{BindingResource as Br, CreateBindGroupErrorKind as Error};
         {
             // Check that the number of entries in the descriptor matches
             // the number of entries in the layout.
@@ -2025,7 +2043,7 @@ impl<A: HalApi> Device<A> {
                                 .ok_or(Error::InvalidSampler(id))?;
 
                             if sampler.device.as_info().id() != self.as_info().id() {
-                                return Err(DeviceError::WrongDevice.into());
+                                return Err(DeviceErrorKind::WrongDevice.into());
                             }
 
                             // Allowed sampler values for filtering and comparison
@@ -2077,7 +2095,7 @@ impl<A: HalApi> Device<A> {
                             .add_single(&*sampler_guard, id)
                             .ok_or(Error::InvalidSampler(id))?;
                         if sampler.device.as_info().id() != self.as_info().id() {
-                            return Err(DeviceError::WrongDevice.into());
+                            return Err(DeviceErrorKind::WrongDevice.into());
                         }
                         hal_samplers.push(sampler.raw());
                     }
@@ -2168,7 +2186,7 @@ impl<A: HalApi> Device<A> {
                 .as_ref()
                 .unwrap()
                 .create_bind_group(&hal_desc)
-                .map_err(DeviceError::from)?
+                .map_err(DeviceErrorKind::from)?
         };
 
         Ok(binding_model::BindGroup {
@@ -2193,8 +2211,8 @@ impl<A: HalApi> Device<A> {
         features: wgt::Features,
         count: Option<NonZeroU32>,
         num_bindings: usize,
-    ) -> Result<(), super::binding_model::CreateBindGroupError> {
-        use super::binding_model::CreateBindGroupError as Error;
+    ) -> Result<(), super::binding_model::CreateBindGroupErrorKind> {
+        use super::binding_model::CreateBindGroupErrorKind as Error;
 
         if let Some(count) = count {
             let count = count.get() as usize;
@@ -2228,8 +2246,9 @@ impl<A: HalApi> Device<A> {
         decl: &wgt::BindGroupLayoutEntry,
         view: &TextureView<A>,
         expected: &'static str,
-    ) -> Result<(wgt::TextureUsages, hal::TextureUses), binding_model::CreateBindGroupError> {
-        use crate::binding_model::CreateBindGroupError as Error;
+    ) -> Result<(wgt::TextureUsages, hal::TextureUses), binding_model::CreateBindGroupErrorKind>
+    {
+        use crate::binding_model::CreateBindGroupErrorKind as Error;
         if view
             .desc
             .aspects()
@@ -2357,8 +2376,9 @@ impl<A: HalApi> Device<A> {
         self: &Arc<Self>,
         desc: &binding_model::PipelineLayoutDescriptor,
         bgl_registry: &Registry<id::BindGroupLayoutId, BindGroupLayout<A>>,
-    ) -> Result<binding_model::PipelineLayout<A>, binding_model::CreatePipelineLayoutError> {
-        use crate::binding_model::CreatePipelineLayoutError as Error;
+    ) -> Result<binding_model::PipelineLayout<A>, binding_model::CreatePipelineLayoutErrorKind>
+    {
+        use crate::binding_model::CreatePipelineLayoutErrorKind as Error;
 
         let bind_group_layouts_count = desc.bind_group_layouts.len();
         let device_max_bind_groups = self.limits.max_bind_groups as usize;
@@ -2422,7 +2442,7 @@ impl<A: HalApi> Device<A> {
         // Validate total resource counts and check for a matching device
         for bgl in &bind_group_layouts {
             if bgl.device.as_info().id() != self.as_info().id() {
-                return Err(DeviceError::WrongDevice.into());
+                return Err(DeviceErrorKind::WrongDevice.into());
             }
 
             count_validator.merge(&bgl.binding_count_validator);
@@ -2449,7 +2469,7 @@ impl<A: HalApi> Device<A> {
                 .as_ref()
                 .unwrap()
                 .create_pipeline_layout(&hal_desc)
-                .map_err(DeviceError::from)?
+                .map_err(DeviceErrorKind::from)?
         };
 
         drop(raw_bind_group_layouts);
@@ -2526,10 +2546,10 @@ impl<A: HalApi> Device<A> {
         let shader_module = hub
             .shader_modules
             .get(desc.stage.module)
-            .map_err(|_| validation::StageError::InvalidModule)?;
+            .map_err(|_| validation::StageErrorKind::InvalidModule)?;
 
         if shader_module.device.as_info().id() != self.as_info().id() {
-            return Err(DeviceError::WrongDevice.into());
+            return Err(DeviceErrorKind::WrongDevice.into());
         }
 
         // Get the pipeline layout from the desc if it is provided.
@@ -2538,10 +2558,10 @@ impl<A: HalApi> Device<A> {
                 let pipeline_layout = hub
                     .pipeline_layouts
                     .get(pipeline_layout_id)
-                    .map_err(|_| pipeline::CreateComputePipelineError::InvalidLayout)?;
+                    .map_err(|_| pipeline::CreateComputePipelineErrorKind::InvalidLayout)?;
 
                 if pipeline_layout.device.as_info().id() != self.as_info().id() {
-                    return Err(DeviceError::WrongDevice.into());
+                    return Err(DeviceErrorKind::WrongDevice.into());
                 }
 
                 Some(pipeline_layout)
@@ -2606,13 +2626,15 @@ impl<A: HalApi> Device<A> {
         }
         .map_err(|err| match err {
             hal::PipelineError::Device(error) => {
-                pipeline::CreateComputePipelineError::Device(error.into())
+                pipeline::CreateComputePipelineErrorKind::Device(error.into())
             }
             hal::PipelineError::Linkage(_stages, msg) => {
-                pipeline::CreateComputePipelineError::Internal(msg)
+                pipeline::CreateComputePipelineErrorKind::Internal(msg)
             }
             hal::PipelineError::EntryPoint(_stage) => {
-                pipeline::CreateComputePipelineError::Internal(ENTRYPOINT_FAILURE_ERROR.to_string())
+                pipeline::CreateComputePipelineErrorKind::Internal(
+                    ENTRYPOINT_FAILURE_ERROR.to_string(),
+                )
             }
         })?;
 
@@ -2633,7 +2655,7 @@ impl<A: HalApi> Device<A> {
         desc: &pipeline::RenderPipelineDescriptor,
         implicit_context: Option<ImplicitPipelineContext>,
         hub: &Hub<A>,
-    ) -> Result<pipeline::RenderPipeline<A>, pipeline::CreateRenderPipelineError> {
+    ) -> Result<pipeline::RenderPipeline<A>, pipeline::CreateRenderPipelineErrorKind> {
         use wgt::TextureFormatFeatureFlags as Tfff;
 
         // This has to be done first, or otherwise the IDs may be pointing to entries
@@ -2652,8 +2674,8 @@ impl<A: HalApi> Device<A> {
 
         let num_attachments = desc.fragment.as_ref().map(|f| f.targets.len()).unwrap_or(0);
         if num_attachments > hal::MAX_COLOR_ATTACHMENTS {
-            return Err(pipeline::CreateRenderPipelineError::ColorAttachment(
-                command::ColorAttachmentError::TooMany {
+            return Err(pipeline::CreateRenderPipelineErrorKind::ColorAttachment(
+                command::ColorAttachmentErrorKind::TooMany {
                     given: num_attachments,
                     limit: hal::MAX_COLOR_ATTACHMENTS,
                 },
@@ -2695,17 +2717,21 @@ impl<A: HalApi> Device<A> {
                 continue;
             }
             if vb_state.array_stride > self.limits.max_vertex_buffer_array_stride as u64 {
-                return Err(pipeline::CreateRenderPipelineError::VertexStrideTooLarge {
-                    index: i as u32,
-                    given: vb_state.array_stride as u32,
-                    limit: self.limits.max_vertex_buffer_array_stride,
-                });
+                return Err(
+                    pipeline::CreateRenderPipelineErrorKind::VertexStrideTooLarge {
+                        index: i as u32,
+                        given: vb_state.array_stride as u32,
+                        limit: self.limits.max_vertex_buffer_array_stride,
+                    },
+                );
             }
             if vb_state.array_stride % wgt::VERTEX_STRIDE_ALIGNMENT != 0 {
-                return Err(pipeline::CreateRenderPipelineError::UnalignedVertexStride {
-                    index: i as u32,
-                    stride: vb_state.array_stride,
-                });
+                return Err(
+                    pipeline::CreateRenderPipelineErrorKind::UnalignedVertexStride {
+                        index: i as u32,
+                        stride: vb_state.array_stride,
+                    },
+                );
             }
             vertex_buffers.push(hal::VertexBufferLayout {
                 array_stride: vb_state.array_stride,
@@ -2716,7 +2742,7 @@ impl<A: HalApi> Device<A> {
             for attribute in vb_state.attributes.iter() {
                 if attribute.offset >= 0x10000000 {
                     return Err(
-                        pipeline::CreateRenderPipelineError::InvalidVertexAttributeOffset {
+                        pipeline::CreateRenderPipelineErrorKind::InvalidVertexAttributeOffset {
                             location: attribute.shader_location,
                             offset: attribute.offset,
                         },
@@ -2737,23 +2763,27 @@ impl<A: HalApi> Device<A> {
                 );
 
                 if previous.is_some() {
-                    return Err(pipeline::CreateRenderPipelineError::ShaderLocationClash(
-                        attribute.shader_location,
-                    ));
+                    return Err(
+                        pipeline::CreateRenderPipelineErrorKind::ShaderLocationClash(
+                            attribute.shader_location,
+                        ),
+                    );
                 }
             }
             total_attributes += vb_state.attributes.len();
         }
 
         if vertex_buffers.len() > self.limits.max_vertex_buffers as usize {
-            return Err(pipeline::CreateRenderPipelineError::TooManyVertexBuffers {
-                given: vertex_buffers.len() as u32,
-                limit: self.limits.max_vertex_buffers,
-            });
+            return Err(
+                pipeline::CreateRenderPipelineErrorKind::TooManyVertexBuffers {
+                    given: vertex_buffers.len() as u32,
+                    limit: self.limits.max_vertex_buffers,
+                },
+            );
         }
         if total_attributes > self.limits.max_vertex_attributes as usize {
             return Err(
-                pipeline::CreateRenderPipelineError::TooManyVertexAttributes {
+                pipeline::CreateRenderPipelineErrorKind::TooManyVertexAttributes {
                     given: total_attributes as u32,
                     limit: self.limits.max_vertex_attributes,
                 },
@@ -2762,7 +2792,7 @@ impl<A: HalApi> Device<A> {
 
         if desc.primitive.strip_index_format.is_some() && !desc.primitive.topology.is_strip() {
             return Err(
-                pipeline::CreateRenderPipelineError::StripIndexFormatForNonStripTopology {
+                pipeline::CreateRenderPipelineErrorKind::StripIndexFormatForNonStripTopology {
                     strip_index_format: desc.primitive.strip_index_format,
                     topology: desc.primitive.topology,
                 },
@@ -2786,7 +2816,7 @@ impl<A: HalApi> Device<A> {
 
         if desc.primitive.conservative && desc.primitive.polygon_mode != wgt::PolygonMode::Fill {
             return Err(
-                pipeline::CreateRenderPipelineError::ConservativeRasterizationNonFillPolygonMode,
+                pipeline::CreateRenderPipelineErrorKind::ConservativeRasterizationNonFillPolygonMode.into(),
             );
         }
 
@@ -2850,8 +2880,7 @@ impl<A: HalApi> Device<A> {
                                     pipeline_expects_dual_source_blending = true;
                                     break;
                                 } else {
-                                    return Err(crate::pipeline::CreateRenderPipelineError
-                            ::BlendFactorOnUnsupportedTarget { factor, target: i as u32 });
+                                    return Err(pipeline::CreateRenderPipelineErrorKind::BlendFactorOnUnsupportedTarget { factor, target: i as u32 });
                                 }
                             }
                         }
@@ -2859,7 +2888,9 @@ impl<A: HalApi> Device<A> {
                     break None;
                 };
                 if let Some(e) = error {
-                    return Err(pipeline::CreateRenderPipelineError::ColorState(i as u8, e));
+                    return Err(pipeline::CreateRenderPipelineErrorKind::ColorState(
+                        i as u8, e,
+                    ));
                 }
             }
         }
@@ -2907,7 +2938,9 @@ impl<A: HalApi> Device<A> {
                 break None;
             };
             if let Some(e) = error {
-                return Err(pipeline::CreateRenderPipelineError::DepthStencilState(e));
+                return Err(pipeline::CreateRenderPipelineErrorKind::DepthStencilState(
+                    e,
+                ));
             }
 
             if ds.bias.clamp != 0.0 {
@@ -2921,10 +2954,10 @@ impl<A: HalApi> Device<A> {
                 let pipeline_layout = hub
                     .pipeline_layouts
                     .get(pipeline_layout_id)
-                    .map_err(|_| pipeline::CreateRenderPipelineError::InvalidLayout)?;
+                    .map_err(|_| pipeline::CreateRenderPipelineErrorKind::InvalidLayout)?;
 
                 if pipeline_layout.device.as_info().id() != self.as_info().id() {
-                    return Err(DeviceError::WrongDevice.into());
+                    return Err(DeviceErrorKind::WrongDevice.into());
                 }
 
                 Some(pipeline_layout)
@@ -2942,7 +2975,9 @@ impl<A: HalApi> Device<A> {
         let samples = {
             let sc = desc.multisample.count;
             if sc == 0 || sc > 32 || !conv::is_power_of_two_u32(sc) {
-                return Err(pipeline::CreateRenderPipelineError::InvalidSampleCount(sc));
+                return Err(pipeline::CreateRenderPipelineErrorKind::InvalidSampleCount(
+                    sc,
+                ));
             }
             sc
         };
@@ -2953,13 +2988,13 @@ impl<A: HalApi> Device<A> {
             let stage = wgt::ShaderStages::VERTEX;
 
             vertex_shader_module = hub.shader_modules.get(stage_desc.module).map_err(|_| {
-                pipeline::CreateRenderPipelineError::Stage {
+                pipeline::CreateRenderPipelineErrorKind::Stage {
                     stage,
-                    error: validation::StageError::InvalidModule,
+                    error: validation::StageErrorKind::InvalidModule,
                 }
             })?;
             if vertex_shader_module.device.as_info().id() != self.as_info().id() {
-                return Err(DeviceError::WrongDevice.into());
+                return Err(DeviceErrorKind::WrongDevice.into());
             }
 
             if let Some(ref interface) = vertex_shader_module.interface {
@@ -2972,7 +3007,10 @@ impl<A: HalApi> Device<A> {
                         io,
                         desc.depth_stencil.as_ref().map(|d| d.depth_compare),
                     )
-                    .map_err(|error| pipeline::CreateRenderPipelineError::Stage { stage, error })?;
+                    .map_err(|error| pipeline::CreateRenderPipelineErrorKind::Stage {
+                        stage,
+                        error,
+                    })?;
                 validated_stages |= stage;
             }
 
@@ -2990,9 +3028,9 @@ impl<A: HalApi> Device<A> {
                 let shader_module = fragment_shader_module.insert(
                     hub.shader_modules
                         .get(fragment_state.stage.module)
-                        .map_err(|_| pipeline::CreateRenderPipelineError::Stage {
+                        .map_err(|_| pipeline::CreateRenderPipelineErrorKind::Stage {
                             stage,
-                            error: validation::StageError::InvalidModule,
+                            error: validation::StageErrorKind::InvalidModule,
                         })?,
                 );
 
@@ -3007,7 +3045,7 @@ impl<A: HalApi> Device<A> {
                                 io,
                                 desc.depth_stencil.as_ref().map(|d| d.depth_compare),
                             )
-                            .map_err(|error| pipeline::CreateRenderPipelineError::Stage {
+                            .map_err(|error| pipeline::CreateRenderPipelineErrorKind::Stage {
                                 stage,
                                 error,
                             })?;
@@ -3018,7 +3056,7 @@ impl<A: HalApi> Device<A> {
                 if let Some(ref interface) = shader_module.interface {
                     shader_expects_dual_source_blending = interface
                         .fragment_uses_dual_source_blending(&fragment_state.stage.entry_point)
-                        .map_err(|error| pipeline::CreateRenderPipelineError::Stage {
+                        .map_err(|error| pipeline::CreateRenderPipelineErrorKind::Stage {
                             stage,
                             error,
                         })?;
@@ -3034,12 +3072,12 @@ impl<A: HalApi> Device<A> {
 
         if !pipeline_expects_dual_source_blending && shader_expects_dual_source_blending {
             return Err(
-                pipeline::CreateRenderPipelineError::ShaderExpectsPipelineToUseDualSourceBlending,
+                pipeline::CreateRenderPipelineErrorKind::ShaderExpectsPipelineToUseDualSourceBlending
             );
         }
         if pipeline_expects_dual_source_blending && !shader_expects_dual_source_blending {
             return Err(
-                pipeline::CreateRenderPipelineError::PipelineExpectsShaderToUseDualSourceBlending,
+                pipeline::CreateRenderPipelineErrorKind::PipelineExpectsShaderToUseDualSourceBlending
             );
         }
 
@@ -3049,7 +3087,7 @@ impl<A: HalApi> Device<A> {
                     Some(Some(state)) => {
                         validation::check_texture_format(state.format, &output.ty).map_err(
                             |pipeline| {
-                                pipeline::CreateRenderPipelineError::ColorState(
+                                pipeline::CreateRenderPipelineErrorKind::ColorState(
                                     *i as u8,
                                     pipeline::ColorStateError::IncompatibleFormat {
                                         pipeline,
@@ -3104,7 +3142,7 @@ impl<A: HalApi> Device<A> {
         {
             for (binding, size) in shader_binding_sizes.iter() {
                 if size.get() % 16 != 0 {
-                    return Err(pipeline::CreateRenderPipelineError::UnalignedShader {
+                    return Err(pipeline::CreateRenderPipelineErrorKind::UnalignedShader {
                         binding: binding.binding,
                         group: binding.group,
                         size: size.get(),
@@ -3136,13 +3174,13 @@ impl<A: HalApi> Device<A> {
         }
         .map_err(|err| match err {
             hal::PipelineError::Device(error) => {
-                pipeline::CreateRenderPipelineError::Device(error.into())
+                pipeline::CreateRenderPipelineErrorKind::Device(error.into())
             }
             hal::PipelineError::Linkage(stage, msg) => {
-                pipeline::CreateRenderPipelineError::Internal { stage, error: msg }
+                pipeline::CreateRenderPipelineErrorKind::Internal { stage, error: msg }
             }
             hal::PipelineError::EntryPoint(stage) => {
-                pipeline::CreateRenderPipelineError::Internal {
+                pipeline::CreateRenderPipelineErrorKind::Internal {
                     stage: hal::auxil::map_naga_stage(stage),
                     error: ENTRYPOINT_FAILURE_ERROR.to_string(),
                 }
@@ -3249,7 +3287,7 @@ impl<A: HalApi> Device<A> {
     pub(crate) fn wait_for_submit(
         &self,
         submission_index: SubmissionIndex,
-    ) -> Result<(), WaitIdleError> {
+    ) -> Result<(), WaitIdleErrorKind> {
         let guard = self.fence.read();
         let fence = guard.as_ref().unwrap();
         let last_done_index = unsafe {
@@ -3257,7 +3295,7 @@ impl<A: HalApi> Device<A> {
                 .as_ref()
                 .unwrap()
                 .get_fence_value(fence)
-                .map_err(DeviceError::from)?
+                .map_err(DeviceErrorKind::from)?
         };
         if last_done_index < submission_index {
             log::info!("Waiting for submission {:?}", submission_index);
@@ -3266,7 +3304,7 @@ impl<A: HalApi> Device<A> {
                     .as_ref()
                     .unwrap()
                     .wait(fence, submission_index, !0)
-                    .map_err(DeviceError::from)?
+                    .map_err(DeviceErrorKind::from)?
             };
             drop(guard);
             let closures = self.lock_life().triage_submissions(
@@ -3284,8 +3322,8 @@ impl<A: HalApi> Device<A> {
     pub(crate) fn create_query_set(
         self: &Arc<Self>,
         desc: &resource::QuerySetDescriptor,
-    ) -> Result<QuerySet<A>, resource::CreateQuerySetError> {
-        use resource::CreateQuerySetError as Error;
+    ) -> Result<QuerySet<A>, resource::CreateQuerySetErrorKind> {
+        use resource::CreateQuerySetErrorKind as Error;
 
         match desc.ty {
             wgt::QueryType::Occlusion => {}

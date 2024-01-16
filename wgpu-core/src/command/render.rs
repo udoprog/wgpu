@@ -7,12 +7,12 @@ use crate::{
         bind::Binder,
         end_occlusion_query, end_pipeline_statistics_query,
         memory_init::{fixup_discarded_surfaces, SurfacesInDiscardState},
-        BasePass, BasePassRef, BindGroupStateChange, CommandBuffer, CommandEncoderError,
+        BasePass, BasePassRef, BindGroupStateChange, CommandBuffer, CommandEncoderErrorKind,
         CommandEncoderStatus, DrawError, ExecutionError, MapPassErr, PassErrorScope, QueryUseError,
         RenderCommand, RenderCommandError, StateChange,
     },
     device::{
-        AttachmentData, Device, DeviceError, MissingDownlevelFlags, MissingFeatures,
+        AttachmentData, Device, DeviceErrorKind, MissingDownlevelFlags, MissingFeatures,
         RenderPassCompatibilityCheckType, RenderPassCompatibilityError, RenderPassContext,
     },
     error::{ErrorFormatter, PrettyError},
@@ -513,9 +513,22 @@ impl fmt::Display for AttachmentErrorLocation {
     }
 }
 
+error_proxy! {
+    pub struct ColorAttachmentError {
+        kind: ColorAttachmentErrorKind,
+    }
+}
+
+impl ColorAttachmentError {
+    #[inline]
+    pub fn too_many(given: usize, limit: usize) -> Self {
+        Self::from(ColorAttachmentErrorKind::TooMany { given, limit })
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum ColorAttachmentError {
+pub(crate) enum ColorAttachmentErrorKind {
     #[error("Attachment format {0:?} is not a color format")]
     InvalidFormat(wgt::TextureFormat),
     #[error("The number of color attachments {given} exceeds the limit {limit}")]
@@ -524,13 +537,13 @@ pub enum ColorAttachmentError {
 
 /// Error encountered when performing a render pass.
 #[derive(Clone, Debug, Error)]
-pub enum RenderPassErrorInner {
+pub(crate) enum RenderPassErrorInner {
     #[error(transparent)]
-    Device(DeviceError),
+    Device(DeviceErrorKind),
     #[error(transparent)]
-    ColorAttachment(#[from] ColorAttachmentError),
+    ColorAttachment(#[from] ColorAttachmentErrorKind),
     #[error(transparent)]
-    Encoder(#[from] CommandEncoderError),
+    Encoder(#[from] CommandEncoderErrorKind),
     #[error("Attachment texture view {0:?} is invalid")]
     InvalidAttachment(id::TextureViewId),
     #[error("The format of the depth-stencil attachment ({0:?}) is not a depth-stencil format")]
@@ -670,8 +683,8 @@ impl From<MissingTextureUsageError> for RenderPassErrorInner {
     }
 }
 
-impl From<DeviceError> for RenderPassErrorInner {
-    fn from(error: DeviceError) -> Self {
+impl From<DeviceErrorKind> for RenderPassErrorInner {
+    fn from(error: DeviceErrorKind) -> Self {
         Self::Device(error)
     }
 }
@@ -1028,7 +1041,7 @@ impl<'a, A: HalApi> RenderPassInfo<'a, A> {
                 .contains(hal::FormatAspects::COLOR)
             {
                 return Err(RenderPassErrorInner::ColorAttachment(
-                    ColorAttachmentError::InvalidFormat(color_view.desc.format),
+                    ColorAttachmentErrorKind::InvalidFormat(color_view.desc.format),
                 ));
             }
 
@@ -1340,7 +1353,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             }
 
             if !device.is_valid() {
-                return Err(DeviceError::Lost).map_pass_err(pass_scope);
+                return Err(DeviceErrorKind::Lost).map_pass_err(pass_scope);
             }
 
             let encoder = &mut cmd_buf_data.encoder;
@@ -1451,7 +1464,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             .map_pass_err(scope)?;
 
                         if bind_group.device.as_info().id() != device.as_info().id() {
-                            return Err(DeviceError::WrongDevice).map_pass_err(scope);
+                            return Err(DeviceErrorKind::WrongDevice).map_pass_err(scope);
                         }
 
                         bind_group
@@ -1519,7 +1532,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             .map_pass_err(scope)?;
 
                         if pipeline.device.as_info().id() != device.as_info().id() {
-                            return Err(DeviceError::WrongDevice).map_pass_err(scope);
+                            return Err(DeviceErrorKind::WrongDevice).map_pass_err(scope);
                         }
 
                         info.context
@@ -1648,7 +1661,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             .map_pass_err(scope)?;
 
                         if buffer.device.as_info().id() != device.as_info().id() {
-                            return Err(DeviceError::WrongDevice).map_pass_err(scope);
+                            return Err(DeviceErrorKind::WrongDevice).map_pass_err(scope);
                         }
 
                         check_buffer_usage(buffer.usage, BufferUsages::INDEX)
@@ -1701,7 +1714,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             .map_pass_err(scope)?;
 
                         if buffer.device.as_info().id() != device.as_info().id() {
-                            return Err(DeviceError::WrongDevice).map_pass_err(scope);
+                            return Err(DeviceErrorKind::WrongDevice).map_pass_err(scope);
                         }
 
                         let max_vertex_buffers = device.limits.max_vertex_buffers;
@@ -2295,7 +2308,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             .map_pass_err(scope)?;
 
                         if bundle.device.as_info().id() != device.as_info().id() {
-                            return Err(DeviceError::WrongDevice).map_pass_err(scope);
+                            return Err(DeviceErrorKind::WrongDevice).map_pass_err(scope);
                         }
 
                         info.context

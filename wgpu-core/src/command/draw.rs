@@ -16,7 +16,7 @@ use thiserror::Error;
 /// Error validating a draw call.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 #[non_exhaustive]
-pub enum DrawError {
+pub(crate) enum DrawError {
     #[error("Blend constant needs to be set")]
     MissingBlendConstant,
     #[error("Render pipeline must be set")]
@@ -56,7 +56,7 @@ pub enum DrawError {
 /// This is the shared error set between render bundles and passes.
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum RenderCommandError {
+pub(crate) enum RenderCommandError {
     #[error("Bind group {0:?} is invalid")]
     InvalidBindGroup(id::BindGroupId),
     #[error("Render bundle {0:?} is invalid")]

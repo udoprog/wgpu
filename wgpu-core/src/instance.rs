@@ -29,7 +29,7 @@ pub struct HalSurface<A: HalApi> {
 
 #[derive(Clone, Debug, Error)]
 #[error("Limit '{name}' value {requested} is better than allowed {allowed}")]
-pub struct FailedLimit {
+pub(crate) struct FailedLimit {
     name: &'static str,
     requested: u64,
     allowed: u64,
@@ -300,7 +300,7 @@ impl<A: HalApi> Adapter<A> {
         desc: &DeviceDescriptor,
         instance_flags: wgt::InstanceFlags,
         trace_path: Option<&std::path::Path>,
-    ) -> Result<(Device<A>, Queue<A>), RequestDeviceError> {
+    ) -> Result<(Device<A>, Queue<A>), RequestDeviceErrorKind> {
         api_log!("Adapter::create_device");
 
         if let Ok(device) = Device::new(
@@ -318,7 +318,7 @@ impl<A: HalApi> Adapter<A> {
             };
             return Ok((device, queue));
         }
-        Err(RequestDeviceError::OutOfMemory)
+        Err(RequestDeviceErrorKind::OutOfMemory)
     }
 
     fn create_device_and_queue(
@@ -326,10 +326,10 @@ impl<A: HalApi> Adapter<A> {
         desc: &DeviceDescriptor,
         instance_flags: wgt::InstanceFlags,
         trace_path: Option<&std::path::Path>,
-    ) -> Result<(Device<A>, Queue<A>), RequestDeviceError> {
+    ) -> Result<(Device<A>, Queue<A>), RequestDeviceErrorKind> {
         // Verify all features were exposed by the adapter
         if !self.raw.features.contains(desc.required_features) {
-            return Err(RequestDeviceError::UnsupportedFeature(
+            return Err(RequestDeviceErrorKind::UnsupportedFeature(
                 desc.required_features - self.raw.features,
             ));
         }
@@ -364,7 +364,7 @@ impl<A: HalApi> Adapter<A> {
         }
 
         if let Some(failed) = check_limits(&desc.required_limits, &caps.limits).pop() {
-            return Err(RequestDeviceError::LimitsExceeded(failed));
+            return Err(RequestDeviceErrorKind::LimitsExceeded(failed));
         }
 
         let open = unsafe {
@@ -373,9 +373,9 @@ impl<A: HalApi> Adapter<A> {
                 .open(desc.required_features, &desc.required_limits)
         }
         .map_err(|err| match err {
-            hal::DeviceError::Lost => RequestDeviceError::DeviceLost,
-            hal::DeviceError::OutOfMemory => RequestDeviceError::OutOfMemory,
-            hal::DeviceError::ResourceCreationFailed => RequestDeviceError::Internal,
+            hal::DeviceError::Lost => RequestDeviceErrorKind::DeviceLost,
+            hal::DeviceError::OutOfMemory => RequestDeviceErrorKind::OutOfMemory,
+            hal::DeviceError::ResourceCreationFailed => RequestDeviceErrorKind::Internal,
         })?;
 
         self.create_device_and_queue_from_hal(open, desc, instance_flags, trace_path)
@@ -414,10 +414,17 @@ pub enum GetSurfaceSupportError {
     Unsupported,
 }
 
+error_proxy! {
+    #[derive(Clone)]
+    pub struct RequestDeviceError {
+        kind: RequestDeviceErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 /// Error when requesting a device from the adaptor
 #[non_exhaustive]
-pub enum RequestDeviceError {
+pub(crate) enum RequestDeviceErrorKind {
     #[error("Parent adapter is invalid")]
     InvalidAdapter,
     #[error("Connection to device was lost during initialization")]
@@ -1078,7 +1085,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let error = loop {
             let adapter = match hub.adapters.get(adapter_id) {
                 Ok(adapter) => adapter,
-                Err(_) => break RequestDeviceError::InvalidAdapter,
+                Err(_) => break RequestDeviceErrorKind::InvalidAdapter,
             };
             let (device, mut queue) =
                 match adapter.create_device_and_queue(desc, self.instance.flags, trace_path) {
@@ -1101,7 +1108,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         let device_id = device_fid.assign_error(desc.label.borrow_or_default());
         let queue_id = queue_fid.assign_error(desc.label.borrow_or_default());
-        (device_id, queue_id, Some(error))
+        (device_id, queue_id, Some(error.into()))
     }
 
     /// # Safety
@@ -1126,7 +1133,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let error = loop {
             let adapter = match hub.adapters.get(adapter_id) {
                 Ok(adapter) => adapter,
-                Err(_) => break RequestDeviceError::InvalidAdapter,
+                Err(_) => break RequestDeviceErrorKind::InvalidAdapter,
             };
             let (device, mut queue) = match adapter.create_device_and_queue_from_hal(
                 hal_device,
@@ -1153,7 +1160,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         let device_id = devices_fid.assign_error(desc.label.borrow_or_default());
         let queue_id = queues_fid.assign_error(desc.label.borrow_or_default());
-        (device_id, queue_id, Some(error))
+        (device_id, queue_id, Some(error.into()))
     }
 }
 

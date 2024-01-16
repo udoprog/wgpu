@@ -2,9 +2,9 @@
 use crate::device::trace::Command as TraceCommand;
 use crate::{
     api_log,
-    command::{clear_texture, CommandBuffer, CommandEncoderError},
+    command::{clear_texture, CommandBuffer, CommandEncoderErrorKind},
     conv,
-    device::{Device, DeviceError, MissingDownlevelFlags},
+    device::{Device, DeviceErrorKind, MissingDownlevelFlags},
     error::{ErrorFormatter, PrettyError},
     global::Global,
     hal_api::HalApi,
@@ -25,7 +25,7 @@ use wgt::{BufferAddress, BufferUsages, Extent3d, TextureUsages};
 
 use std::{iter, sync::Arc};
 
-use super::{memory_init::CommandBufferTextureMemoryActions, ClearError, CommandEncoder};
+use super::{memory_init::CommandBufferTextureMemoryActions, ClearErrorKind, CommandEncoder};
 
 pub type ImageCopyBuffer = wgt::ImageCopyBuffer<BufferId>;
 pub type ImageCopyTexture = wgt::ImageCopyTexture<TextureId>;
@@ -40,7 +40,7 @@ pub enum CopySide {
 /// Error encountered while attempting a data transfer.
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum TransferError {
+pub(crate) enum TransferError {
     #[error("Device {0:?} is invalid")]
     InvalidDevice(DeviceId),
     #[error("Buffer {0:?} is invalid or destroyed")]
@@ -135,7 +135,7 @@ pub enum TransferError {
         dst_format: wgt::TextureFormat,
     },
     #[error(transparent)]
-    MemoryInitFailure(#[from] ClearError),
+    MemoryInitFailure(#[from] ClearErrorKind),
     #[error("Cannot encode this copy because of a missing downelevel flag")]
     MissingDownlevelFlags(#[from] MissingDownlevelFlags),
     #[error("Source texture sample count must be 1, got {sample_count}")]
@@ -176,19 +176,26 @@ impl PrettyError for TransferError {
         };
     }
 }
+
+error_proxy! {
+    pub struct CopyError {
+        kind: CopyErrorKind,
+    }
+}
+
 /// Error encountered while attempting to do a copy on a command encoder.
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum CopyError {
+pub(crate) enum CopyErrorKind {
     #[error(transparent)]
-    Encoder(#[from] CommandEncoderError),
+    Encoder(#[from] CommandEncoderErrorKind),
     #[error("Copy error")]
     Transfer(#[from] TransferError),
 }
 
-impl From<DeviceError> for CopyError {
-    fn from(err: DeviceError) -> Self {
-        CopyError::Encoder(CommandEncoderError::Device(err))
+impl From<DeviceErrorKind> for CopyErrorKind {
+    fn from(err: DeviceErrorKind) -> Self {
+        CopyErrorKind::Encoder(CommandEncoderErrorKind::Device(err))
     }
 }
 
@@ -453,7 +460,7 @@ fn handle_texture_init<A: HalApi>(
     copy_texture: &ImageCopyTexture,
     copy_size: &Extent3d,
     texture: &Arc<Texture<A>>,
-) -> Result<(), ClearError> {
+) -> Result<(), ClearErrorKind> {
     let init_action = TextureInitTrackerAction {
         texture: texture.clone(),
         range: TextureInitRange {

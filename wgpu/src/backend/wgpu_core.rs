@@ -248,13 +248,13 @@ impl ContextWgpuCore {
         let mut sink = sink_mutex.lock();
         let mut source_opt: Option<&(dyn Error + 'static)> = Some(&error);
         while let Some(source) = source_opt {
-            if let Some(wgc::device::DeviceError::OutOfMemory) =
-                source.downcast_ref::<wgc::device::DeviceError>()
+            if matches!(source.downcast_ref::<wgc::device::DeviceError>(), Some(error) if error.is_out_of_memory())
             {
                 return sink.handle_error(crate::Error::OutOfMemory {
                     source: Box::new(error),
                 });
             }
+
             source_opt = source.source();
         }
 
@@ -1148,7 +1148,7 @@ impl crate::Context for ContextWgpuCore {
             implicit_pipeline_ids
         ));
         if let Some(cause) = error {
-            if let wgc::pipeline::CreateRenderPipelineError::Internal { stage, ref error } = cause {
+            if let Some((stage, error)) = cause.as_shader_error() {
                 log::error!("Shader translation error for stage {:?}: {}", stage, error);
                 log::error!("Please report it to https://github.com/gfx-rs/wgpu");
             }
@@ -1193,7 +1193,7 @@ impl crate::Context for ContextWgpuCore {
             implicit_pipeline_ids
         ));
         if let Some(cause) = error {
-            if let wgc::pipeline::CreateComputePipelineError::Internal(ref error) = cause {
+            if let Some(ref error) = cause.as_shader_error() {
                 log::error!(
                     "Shader translation error for stage {:?}: {}",
                     wgt::ShaderStages::COMPUTE,
@@ -1833,10 +1833,10 @@ impl crate::Context for ContextWgpuCore {
     ) -> (Self::RenderPassId, Self::RenderPassData) {
         if desc.color_attachments.len() > wgc::MAX_COLOR_ATTACHMENTS {
             self.handle_error_fatal(
-                wgc::command::ColorAttachmentError::TooMany {
-                    given: desc.color_attachments.len(),
-                    limit: wgc::MAX_COLOR_ATTACHMENTS,
-                },
+                wgc::command::ColorAttachmentError::too_many(
+                    desc.color_attachments.len(),
+                    wgc::MAX_COLOR_ATTACHMENTS,
+                ),
                 "CommandEncoder::begin_render_pass",
             );
         }

@@ -3,7 +3,7 @@ use crate::{
     command::RenderBundle,
     device::{
         queue::{EncoderInFlight, SubmittedWorkDoneClosure, TempResource},
-        DeviceError, DeviceLostClosure,
+        DeviceErrorKind, DeviceLostClosure,
     },
     hal_api::HalApi,
     id::{
@@ -160,11 +160,17 @@ struct ActiveSubmission<A: HalApi> {
     work_done_closures: SmallVec<[SubmittedWorkDoneClosure; 1]>,
 }
 
+error_proxy! {
+    pub struct WaitIdleError {
+        kind: WaitIdleErrorKind,
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 #[non_exhaustive]
-pub enum WaitIdleError {
+pub(crate) enum WaitIdleErrorKind {
     #[error(transparent)]
-    Device(#[from] DeviceError),
+    Device(#[from] DeviceErrorKind),
     #[error("Tried to wait using a submission index from the wrong device. Submission index is from device {0:?}. Called poll on device {1:?}.")]
     WrongSubmissionIndex(id::QueueId, id::DeviceId),
     #[error("GPU got stuck :(")]
