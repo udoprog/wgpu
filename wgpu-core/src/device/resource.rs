@@ -2714,38 +2714,53 @@ impl<A: HalApi> Device<A> {
         let mut total_attributes = 0;
         let mut shader_expects_dual_source_blending = false;
         let mut pipeline_expects_dual_source_blending = false;
-        for (i, vb_state) in desc.vertex.buffers.iter().enumerate() {
+
+        let enter_vertex_buffers = cx.enter("vertex.buffers");
+
+        for (index, vb_state) in desc.vertex.buffers.iter().enumerate() {
+            cx.index(index);
+
             vertex_steps.push(pipeline::VertexStep {
                 stride: vb_state.array_stride,
                 mode: vb_state.step_mode,
             });
+
             if vb_state.attributes.is_empty() {
                 continue;
             }
+
+            let enter_array_stride = cx.enter("array_stride");
+
             if vb_state.array_stride > self.limits.max_vertex_buffer_array_stride as u64 {
                 return Err(
                     cx.report(pipeline::CreateRenderPipelineError::VertexStrideTooLarge {
-                        index: i as u32,
                         given: vb_state.array_stride as u32,
                         limit: self.limits.max_vertex_buffer_array_stride,
                     }),
                 );
             }
+
             if vb_state.array_stride % wgt::VERTEX_STRIDE_ALIGNMENT != 0 {
                 return Err(cx.report(
                     pipeline::CreateRenderPipelineError::UnalignedVertexStride {
-                        index: i as u32,
                         stride: vb_state.array_stride,
                     },
                 ));
             }
+
+            cx.leave(enter_array_stride);
+
             vertex_buffers.push(hal::VertexBufferLayout {
                 array_stride: vb_state.array_stride,
                 step_mode: vb_state.step_mode,
                 attributes: vb_state.attributes.as_ref(),
             });
 
-            for attribute in vb_state.attributes.iter() {
+            let enter_attributes = cx.enter("attributes");
+
+            for (index, attribute) in vb_state.attributes.iter().enumerate() {
+                cx.index(index);
+
                 if attribute.offset >= 0x10000000 {
                     return Err(cx.report(
                         pipeline::CreateRenderPipelineError::InvalidVertexAttributeOffset {
@@ -2776,8 +2791,13 @@ impl<A: HalApi> Device<A> {
                     ));
                 }
             }
+
+            cx.leave(enter_attributes);
+
             total_attributes += vb_state.attributes.len();
         }
+
+        cx.leave(enter_vertex_buffers);
 
         if vertex_buffers.len() > self.limits.max_vertex_buffers as usize {
             return Err(
@@ -2787,6 +2807,7 @@ impl<A: HalApi> Device<A> {
                 }),
             );
         }
+
         if total_attributes > self.limits.max_vertex_attributes as usize {
             return Err(cx.report(
                 pipeline::CreateRenderPipelineError::TooManyVertexAttributes {
@@ -2826,7 +2847,11 @@ impl<A: HalApi> Device<A> {
             ));
         }
 
-        for (i, cs) in color_targets.iter().enumerate() {
+        let fragment_targets_enter = cx.enter("fragment.targets");
+
+        for (index, cs) in color_targets.iter().enumerate() {
+            cx.index(index);
+
             if let Some(cs) = cs.as_ref() {
                 let error = loop {
                     if cs.write_mask.contains_invalid_bits() {
@@ -2885,12 +2910,12 @@ impl<A: HalApi> Device<A> {
                                 cx.result(
                                     self.require_features(wgt::Features::DUAL_SOURCE_BLENDING),
                                 )?;
-                                if i == 0 {
+                                if index == 0 {
                                     pipeline_expects_dual_source_blending = true;
                                     break;
                                 } else {
                                     return Err(cx.report(crate::pipeline::CreateRenderPipelineError
-                            ::BlendFactorOnUnsupportedTarget { factor, target: i as u32 }));
+                            ::BlendFactorOnUnsupportedTarget { factor }));
                                 }
                             }
                         }
@@ -2899,16 +2924,21 @@ impl<A: HalApi> Device<A> {
                 };
                 if let Some(e) = error {
                     return Err(
-                        cx.report(pipeline::CreateRenderPipelineError::ColorState(i as u8, e))
+                        cx.report(pipeline::CreateRenderPipelineError::ColorState(e))
                     );
                 }
             }
         }
 
+        cx.leave(fragment_targets_enter);
+
         if let Some(ds) = depth_stencil_state {
+            let depth_stencil_enter = cx.enter("depth_stencil");
+
             let error = loop {
                 let format_features =
                     cx.result(self.describe_format_features(adapter, ds.format))?;
+
                 if !format_features
                     .allowed_usages
                     .contains(wgt::TextureUsages::RENDER_ATTACHMENT)
@@ -2948,6 +2978,7 @@ impl<A: HalApi> Device<A> {
 
                 break None;
             };
+
             if let Some(e) = error {
                 return Err(cx.report(pipeline::CreateRenderPipelineError::DepthStencilState(e)));
             }
@@ -2955,7 +2986,11 @@ impl<A: HalApi> Device<A> {
             if ds.bias.clamp != 0.0 {
                 cx.result(self.require_downlevel_flags(wgt::DownlevelFlags::DEPTH_BIAS_CLAMP))?;
             }
+
+            cx.leave(depth_stencil_enter);
         }
+
+        let layout_enter = cx.enter("layout");
 
         // Get the pipeline layout from the desc if it is provided.
         let pipeline_layout = match desc.layout {
@@ -2974,6 +3009,10 @@ impl<A: HalApi> Device<A> {
             }
             None => None,
         };
+
+        cx.leave(layout_enter);
+
+        // TODO: trace more!
 
         let mut binding_layout_source = match pipeline_layout {
             Some(ref pipeline_layout) => {
@@ -3106,7 +3145,6 @@ impl<A: HalApi> Device<A> {
                             validation::check_texture_format(state.format, &output.ty).map_err(
                                 |pipeline| {
                                     pipeline::CreateRenderPipelineError::ColorState(
-                                        *i as u8,
                                         pipeline::ColorStateError::IncompatibleFormat {
                                             pipeline,
                                             shader: output.ty,

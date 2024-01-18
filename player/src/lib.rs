@@ -229,9 +229,11 @@ impl GlobalPlay for wgc::global::Global<IdentityPassThroughFactory> {
 
                 self.device_create_bind_group_layout::<A>(&mut cx, device, &desc, id);
 
-                for e in cx.drain() {
-                    panic!("{e}");
+                for e in cx.iter() {
+                    log::error!("{e}");
                 }
+
+                assert!(cx.is_empty(), "device create bind group layout errored");
             }
             Action::DestroyBindGroupLayout(id) => {
                 self.bind_group_layout_drop::<A>(id);
@@ -293,9 +295,11 @@ impl GlobalPlay for wgc::global::Global<IdentityPassThroughFactory> {
 
                 self.device_create_compute_pipeline::<A>(&mut cx, device, &desc, id, implicit_ids);
 
-                for e in cx.drain() {
-                    panic!("{e}");
+                for e in cx.iter() {
+                    log::error!("{e}");
                 }
+
+                assert!(cx.is_empty(), "device create compute pipeline errored");
             }
             Action::DestroyComputePipeline(id) => {
                 self.compute_pipeline_drop::<A>(id);
@@ -318,9 +322,11 @@ impl GlobalPlay for wgc::global::Global<IdentityPassThroughFactory> {
 
                 self.device_create_render_pipeline::<A>(&mut cx, device, &desc, id, implicit_ids);
 
-                for e in cx.drain() {
-                    panic!("{e}");
+                for e in cx.iter() {
+                    log::error!("{e}");
                 }
+
+                assert!(cx.is_empty(), "device create render pipeline errored");
             }
             Action::DestroyRenderPipeline(id) => {
                 self.render_pipeline_drop::<A>(id);

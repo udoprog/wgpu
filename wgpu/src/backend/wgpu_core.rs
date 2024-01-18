@@ -243,7 +243,28 @@ impl ContextWgpuCore {
             return;
         }
 
-        for cause in cx.drain() {
+        for (trace, cause) in cx.drain() {
+            // Special cased error handling.
+            // TODO: include trace.
+            match cause {
+                wgc::Diagnostic::CreateComputePipelineError(
+                    wgc::pipeline::CreateComputePipelineError::Internal(ref error),
+                ) => {
+                    log::error!(
+                        "Shader translation error for stage {:?}: {error}",
+                        wgt::ShaderStages::COMPUTE,
+                    );
+                    log::error!("Please report it to https://github.com/gfx-rs/wgpu");
+                }
+                wgc::Diagnostic::CreateRenderPipelineError(
+                    wgc::pipeline::CreateRenderPipelineError::Internal { stage, ref error },
+                ) => {
+                    log::error!("Shader translation error for stage {stage:?}: {error}");
+                    log::error!("Please report it to https://github.com/gfx-rs/wgpu");
+                }
+                _ => {}
+            }
+
             let error = wgc::error::ContextError {
                 string,
                 cause: Box::new(cause),
@@ -265,7 +286,7 @@ impl ContextWgpuCore {
 
             // Otherwise, it is a validation error
             sink.handle_error(crate::Error::Validation {
-                description: self.format_error(&error),
+                description: self.format_error(trace, &error),
                 source: Box::new(error),
             });
         }
@@ -300,7 +321,7 @@ impl ContextWgpuCore {
 
         // Otherwise, it is a validation error
         sink.handle_error(crate::Error::Validation {
-            description: self.format_error(&error),
+            description: self.format_error(None, &error),
             source: Box::new(error),
         });
     }
@@ -320,26 +341,43 @@ impl ContextWgpuCore {
         cause: impl Error + WasmNotSendSync + 'static,
         operation: &'static str,
     ) -> ! {
-        panic!("Error in {operation}: {f}", f = self.format_error(&cause));
+        panic!(
+            "Error in {operation}: {f}",
+            f = self.format_error(None, &cause)
+        );
     }
 
-    fn format_error(&self, err: &(impl Error + 'static)) -> String {
-        let global = self.global();
-        let mut err_descs = vec![];
+    fn format_error(
+        &self,
+        trace: Option<wgc::DiagnosticTrace<'_>>,
+        err: &(impl Error + 'static),
+    ) -> String {
+        use std::fmt::Write as _;
 
-        let mut err_str = String::new();
-        wgc::error::format_pretty_any(&mut err_str, global, err);
-        err_descs.push(err_str);
+        let global = self.global();
+        let mut err_descs = String::new();
+
+        err_descs.push_str("Validation Error\n");
+
+        if let Some(trace) = trace {
+            write!(err_descs, "Validation Error at {trace}\n").unwrap();
+        } else {
+            err_descs.push_str("Validation Error\n");
+        }
+
+        err_descs.push('\n');
+        err_descs.push_str("Caused by: \n");
+
+        wgc::error::format_pretty_any(&mut err_descs, global, err);
 
         let mut source_opt = err.source();
+
         while let Some(source) = source_opt {
-            let mut source_str = String::new();
-            wgc::error::format_pretty_any(&mut source_str, global, source);
-            err_descs.push(source_str);
+            wgc::error::format_pretty_any(&mut err_descs, global, source);
             source_opt = source.source();
         }
 
-        format!("Validation Error\n\nCaused by:\n{}", err_descs.join(""))
+        err_descs
     }
 }
 
@@ -1192,16 +1230,6 @@ impl crate::Context for ContextWgpuCore {
             implicit_pipeline_ids
         ));
 
-        for error in cx.iter() {
-            if let wgc::Diagnostic::CreateRenderPipelineError(
-                wgc::pipeline::CreateRenderPipelineError::Internal { stage, ref error },
-            ) = *error
-            {
-                log::error!("Shader translation error for stage {:?}: {}", stage, error);
-                log::error!("Please report it to https://github.com/gfx-rs/wgpu");
-            }
-        }
-
         self.handle_diagnostics(
             &mut cx,
             &device_data.error_sink,
@@ -1246,29 +1274,13 @@ impl crate::Context for ContextWgpuCore {
             implicit_pipeline_ids
         ));
 
-        if cx.is_empty() {
-            for error in cx.iter() {
-                if let wgc::Diagnostic::CreateComputePipelineError(
-                    wgc::pipeline::CreateComputePipelineError::Internal(ref error),
-                ) = *error
-                {
-                    log::error!(
-                        "Shader translation error for stage {:?}: {}",
-                        wgt::ShaderStages::COMPUTE,
-                        error
-                    );
-                    log::error!("Please report it to https://github.com/gfx-rs/wgpu");
-                }
-            }
-
-            self.handle_diagnostics(
-                &mut cx,
-                &device_data.error_sink,
-                LABEL,
-                desc.label,
-                "Device::create_compute_pipeline",
-            );
-        }
+        self.handle_diagnostics(
+            &mut cx,
+            &device_data.error_sink,
+            LABEL,
+            desc.label,
+            "Device::create_compute_pipeline",
+        );
 
         (id, ())
     }

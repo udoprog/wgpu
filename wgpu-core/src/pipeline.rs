@@ -391,8 +391,8 @@ pub enum CreateRenderPipelineError {
     InvalidLayout,
     #[error("Unable to derive an implicit layout")]
     Implicit(#[from] ImplicitLayoutError),
-    #[error("Color state [{0}] is invalid")]
-    ColorState(u8, #[source] ColorStateError),
+    #[error("Color state is invalid")]
+    ColorState(#[source] ColorStateError),
     #[error("Depth/stencil state is invalid")]
     DepthStencilState(#[from] DepthStencilStateError),
     #[error("Invalid sample count {0}")]
@@ -401,13 +401,10 @@ pub enum CreateRenderPipelineError {
     TooManyVertexBuffers { given: u32, limit: u32 },
     #[error("The total number of vertex attributes {given} exceeds the limit {limit}")]
     TooManyVertexAttributes { given: u32, limit: u32 },
-    #[error("Vertex buffer {index} stride {given} exceeds the limit {limit}")]
-    VertexStrideTooLarge { index: u32, given: u32, limit: u32 },
-    #[error("Vertex buffer {index} stride {stride} does not respect `VERTEX_STRIDE_ALIGNMENT`")]
-    UnalignedVertexStride {
-        index: u32,
-        stride: wgt::BufferAddress,
-    },
+    #[error("Vertex buffer stride {given} exceeds the limit {limit}")]
+    VertexStrideTooLarge { given: u32, limit: u32 },
+    #[error("Vertex buffer stride {stride} does not respect `VERTEX_STRIDE_ALIGNMENT`")]
+    UnalignedVertexStride { stride: wgt::BufferAddress },
     #[error("Vertex attribute at location {location} has invalid offset {offset}")]
     InvalidVertexAttributeOffset {
         location: wgt::ShaderLocation,
@@ -439,10 +436,9 @@ pub enum CreateRenderPipelineError {
     },
     #[error("In the provided shader, the type given for group {group} binding {binding} has a size of {size}. As the device does not support `DownlevelFlags::BUFFER_BINDINGS_NOT_16_BYTE_ALIGNED`, the type must have a size that is a multiple of 16 bytes.")]
     UnalignedShader { group: u32, binding: u32, size: u64 },
-    #[error("Using the blend factor {factor:?} for render target {target} is not possible. Only the first render target may be used when dual-source blending.")]
+    #[error("Using the blend factor {factor:?} is not possible. Only the first render target may be used when dual-source blending.")]
     BlendFactorOnUnsupportedTarget {
         factor: wgt::BlendFactor,
-        target: u32,
     },
     #[error("Pipeline expects the shader entry point to make use of dual-source blending.")]
     PipelineExpectsShaderToUseDualSourceBlending,

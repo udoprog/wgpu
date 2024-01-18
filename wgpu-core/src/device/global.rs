@@ -935,12 +935,14 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         let hub = A::hub(self);
 
-        let result = try_block(|| {
+        let result = cx.try_block(|cx| {
             let device = cx.result(hub.devices.get(device_id).map_err(|_| DeviceError::Invalid))?;
 
             if !device.is_valid() {
                 return Err(cx.report(DeviceError::Lost));
             }
+
+            let fid = hub.bind_group_layouts.prepare::<G>(id_in);
 
             #[cfg(feature = "trace")]
             if let Some(ref mut trace) = *device.trace.lock() {
@@ -959,7 +961,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             // Because we need to call `assign` inside the closure (to get mut access), we need to "move" the future id into the closure.
             // Rust cannot figure out at compile time that we only ever consume the ID once, so we need to move the check
             // to runtime using an Option.
-            let mut fid = Some(hub.bind_group_layouts.prepare::<G>(id_in));
+            let mut fid = Some(fid);
 
             let mut id = None;
 
@@ -1538,7 +1540,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let implicit_context = implicit_pipeline_ids.map(|ipi| ipi.prepare(hub));
         let implicit_error_context = implicit_context.clone();
 
-        let result = try_block(|| {
+        let result = cx.try_block(|cx| {
             let device = cx.result(hub.devices.get(device_id).map_err(|_| DeviceError::Invalid))?;
 
             if !device.is_valid() {
@@ -1676,7 +1678,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let implicit_context = implicit_pipeline_ids.map(|ipi| ipi.prepare(hub));
         let implicit_error_context = implicit_context.clone();
 
-        let result = try_block(|| {
+        let result = cx.try_block(|cx| {
             let device = cx.result(hub.devices.get(device_id).map_err(|_| DeviceError::Invalid))?;
 
             if !device.is_valid() {
@@ -2530,14 +2532,4 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         buffer.unmap()
     }
-}
-
-/// Helper to evaluate a callback, which aids in making the implementation of
-/// the infallible methods above cleaner.
-#[inline(always)]
-pub(crate) fn try_block<F, T>(cb: F) -> Result<T, crate::Error>
-where
-    F: FnOnce() -> Result<T, crate::Error>,
-{
-    cb()
 }

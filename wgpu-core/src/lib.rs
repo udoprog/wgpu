@@ -105,7 +105,7 @@ mod track;
 // made private again.
 pub mod validation;
 
-pub use context::{Context, Diagnostic, Error};
+pub use context::{Context, Diagnostic, DiagnosticTrace, Error};
 pub use hal::{api, MAX_BIND_GROUPS, MAX_COLOR_ATTACHMENTS, MAX_VERTEX_BUFFERS};
 pub use naga;
 
