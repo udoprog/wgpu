@@ -31,7 +31,7 @@ use crate::{
     storage::Storage,
     track::{BindGroupStates, TextureSelector, Tracker},
     validation::{self, check_buffer_usage, check_texture_usage},
-    FastHashMap, LabelHelpers as _, SubmissionIndex,
+    Context, FastHashMap, LabelHelpers as _, SubmissionIndex,
 };
 
 use arrayvec::ArrayVec;
@@ -1546,10 +1546,11 @@ impl<A: HalApi> Device<A> {
 
     pub(crate) fn create_bind_group_layout(
         self: &Arc<Self>,
+        cx: &mut Context<'_>,
         label: &crate::Label,
         entry_map: bgl::EntryMap,
         origin: bgl::Origin,
-    ) -> Result<BindGroupLayout<A>, binding_model::CreateBindGroupLayoutError> {
+    ) -> Result<BindGroupLayout<A>, crate::Error> {
         #[derive(PartialEq)]
         enum WritableStorage {
             Yes,
@@ -1600,11 +1601,11 @@ impl<A: HalApi> Device<A> {
                     sample_type: TextureSampleType::Float { filterable: true },
                     ..
                 } => {
-                    return Err(binding_model::CreateBindGroupLayoutError::Entry {
+                    return Err(cx.report(binding_model::CreateBindGroupLayoutError::Entry {
                         binding: entry.binding,
                         error:
                             BindGroupLayoutEntryError::SampleTypeFloatFilterableBindingMultisampled,
-                    });
+                    }));
                 }
                 Bt::Texture { .. } => (
                     Some(wgt::Features::TEXTURE_BINDING_ARRAY),
@@ -1617,10 +1618,12 @@ impl<A: HalApi> Device<A> {
                 } => {
                     match view_dimension {
                         wgt::TextureViewDimension::Cube | wgt::TextureViewDimension::CubeArray => {
-                            return Err(binding_model::CreateBindGroupLayoutError::Entry {
-                                binding: entry.binding,
-                                error: BindGroupLayoutEntryError::StorageTextureCube,
-                            })
+                            return Err(cx.report(
+                                binding_model::CreateBindGroupLayoutError::Entry {
+                                    binding: entry.binding,
+                                    error: BindGroupLayoutEntryError::StorageTextureCube,
+                                },
+                            ))
                         }
                         _ => (),
                     }
@@ -1631,10 +1634,12 @@ impl<A: HalApi> Device<A> {
                                 wgt::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                             ) =>
                         {
-                            return Err(binding_model::CreateBindGroupLayoutError::Entry {
-                                binding: entry.binding,
-                                error: BindGroupLayoutEntryError::StorageTextureReadWrite,
-                            });
+                            return Err(cx.report(
+                                binding_model::CreateBindGroupLayoutError::Entry {
+                                    binding: entry.binding,
+                                    error: BindGroupLayoutEntryError::StorageTextureReadWrite,
+                                },
+                            ));
                         }
                         _ => (),
                     }
@@ -1663,18 +1668,20 @@ impl<A: HalApi> Device<A> {
 
             // Validate the count parameter
             if entry.count.is_some() {
-                required_features |= array_feature
-                    .ok_or(BindGroupLayoutEntryError::ArrayUnsupported)
-                    .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
-                        binding: entry.binding,
-                        error,
-                    })?;
+                required_features |= cx.result(
+                    array_feature
+                        .ok_or(BindGroupLayoutEntryError::ArrayUnsupported)
+                        .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
+                            binding: entry.binding,
+                            error,
+                        }),
+                )?;
             }
 
             if entry.visibility.contains_invalid_bits() {
-                return Err(
+                return Err(cx.report(
                     binding_model::CreateBindGroupLayoutError::InvalidVisibility(entry.visibility),
-                );
+                ));
             }
 
             if entry.visibility.contains(wgt::ShaderStages::VERTEX) {
@@ -1695,18 +1702,22 @@ impl<A: HalApi> Device<A> {
                 required_downlevel_flags |= wgt::DownlevelFlags::FRAGMENT_WRITABLE_STORAGE;
             }
 
-            self.require_features(required_features)
-                .map_err(BindGroupLayoutEntryError::MissingFeatures)
-                .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
-                    binding: entry.binding,
-                    error,
-                })?;
-            self.require_downlevel_flags(required_downlevel_flags)
-                .map_err(BindGroupLayoutEntryError::MissingDownlevelFlags)
-                .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
-                    binding: entry.binding,
-                    error,
-                })?;
+            cx.result(
+                self.require_features(required_features)
+                    .map_err(BindGroupLayoutEntryError::MissingFeatures)
+                    .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
+                        binding: entry.binding,
+                        error,
+                    }),
+            )?;
+            cx.result(
+                self.require_downlevel_flags(required_downlevel_flags)
+                    .map_err(BindGroupLayoutEntryError::MissingDownlevelFlags)
+                    .map_err(|error| binding_model::CreateBindGroupLayoutError::Entry {
+                        binding: entry.binding,
+                        error,
+                    }),
+            )?;
         }
 
         let bgl_flags = conv::bind_group_layout_flags(self.features);
@@ -1719,11 +1730,13 @@ impl<A: HalApi> Device<A> {
             entries: &hal_bindings,
         };
         let raw = unsafe {
-            self.raw
-                .as_ref()
-                .unwrap()
-                .create_bind_group_layout(&hal_desc)
-                .map_err(DeviceError::from)?
+            cx.result(
+                self.raw
+                    .as_ref()
+                    .unwrap()
+                    .create_bind_group_layout(&hal_desc)
+                    .map_err(DeviceError::from),
+            )?
         };
 
         let mut count_validator = binding_model::BindingTypeMaxCountValidator::default();
@@ -1732,9 +1745,11 @@ impl<A: HalApi> Device<A> {
         }
         // If a single bind group layout violates limits, the pipeline layout is
         // definitely going to violate limits too, lets catch it now.
-        count_validator
-            .validate(&self.limits)
-            .map_err(binding_model::CreateBindGroupLayoutError::TooManyBindings)?;
+        cx.result(
+            count_validator
+                .validate(&self.limits)
+                .map_err(binding_model::CreateBindGroupLayoutError::TooManyBindings),
+        )?;
 
         Ok(BindGroupLayout {
             raw: Some(raw),
@@ -2467,18 +2482,20 @@ impl<A: HalApi> Device<A> {
     // (the pipeline layout).
     pub(crate) fn derive_pipeline_layout(
         self: &Arc<Self>,
+        cx: &mut Context<'_>,
         implicit_context: Option<ImplicitPipelineContext>,
         mut derived_group_layouts: ArrayVec<bgl::EntryMap, { hal::MAX_BIND_GROUPS }>,
         bgl_registry: &Registry<id::BindGroupLayoutId, BindGroupLayout<A>>,
         pipeline_layout_registry: &Registry<id::PipelineLayoutId, binding_model::PipelineLayout<A>>,
-    ) -> Result<Arc<binding_model::PipelineLayout<A>>, pipeline::ImplicitLayoutError> {
+    ) -> Result<Arc<binding_model::PipelineLayout<A>>, crate::Error> {
         while derived_group_layouts
             .last()
             .map_or(false, |map| map.is_empty())
         {
             derived_group_layouts.pop();
         }
-        let mut ids = implicit_context.ok_or(pipeline::ImplicitLayoutError::MissingIds(0))?;
+        let mut ids =
+            cx.result(implicit_context.ok_or(pipeline::ImplicitLayoutError::MissingIds(0)))?;
         let group_count = derived_group_layouts.len();
         if ids.group_ids.len() < group_count {
             log::error!(
@@ -2486,11 +2503,11 @@ impl<A: HalApi> Device<A> {
                 ids.group_ids.len(),
                 derived_group_layouts.len()
             );
-            return Err(pipeline::ImplicitLayoutError::MissingIds(group_count as _));
+            return Err(cx.report(pipeline::ImplicitLayoutError::MissingIds(group_count as _)));
         }
 
         for (bgl_id, map) in ids.group_ids.iter_mut().zip(derived_group_layouts) {
-            let bgl = self.create_bind_group_layout(&None, map, bgl::Origin::Derived)?;
+            let bgl = self.create_bind_group_layout(cx, &None, map, bgl::Origin::Derived)?;
             bgl_registry.force_replace(*bgl_id, bgl);
         }
 
@@ -2499,17 +2516,18 @@ impl<A: HalApi> Device<A> {
             bind_group_layouts: Cow::Borrowed(&ids.group_ids[..group_count]),
             push_constant_ranges: Cow::Borrowed(&[]), //TODO?
         };
-        let layout = self.create_pipeline_layout(&layout_desc, bgl_registry)?;
+        let layout = cx.result(self.create_pipeline_layout(&layout_desc, bgl_registry))?;
         pipeline_layout_registry.force_replace(ids.root_id, layout);
         Ok(pipeline_layout_registry.get(ids.root_id).unwrap())
     }
 
     pub(crate) fn create_compute_pipeline(
         self: &Arc<Self>,
+        cx: &mut Context<'_>,
         desc: &pipeline::ComputePipelineDescriptor,
         implicit_context: Option<ImplicitPipelineContext>,
         hub: &Hub<A>,
-    ) -> Result<pipeline::ComputePipeline<A>, pipeline::CreateComputePipelineError> {
+    ) -> Result<pipeline::ComputePipeline<A>, crate::Error> {
         // This has to be done first, or otherwise the IDs may be pointing to entries
         // that are not even in the storage.
         if let Some(ref ids) = implicit_context {
@@ -2521,27 +2539,29 @@ impl<A: HalApi> Device<A> {
             }
         }
 
-        self.require_downlevel_flags(wgt::DownlevelFlags::COMPUTE_SHADERS)?;
+        cx.result(self.require_downlevel_flags(wgt::DownlevelFlags::COMPUTE_SHADERS))?;
 
-        let shader_module = hub
-            .shader_modules
-            .get(desc.stage.module)
-            .map_err(|_| validation::StageError::InvalidModule)?;
+        let shader_module = cx.result(
+            hub.shader_modules
+                .get(desc.stage.module)
+                .map_err(|_| validation::StageError::InvalidModule),
+        )?;
 
         if shader_module.device.as_info().id() != self.as_info().id() {
-            return Err(DeviceError::WrongDevice.into());
+            return Err(cx.report(DeviceError::WrongDevice));
         }
 
         // Get the pipeline layout from the desc if it is provided.
         let pipeline_layout = match desc.layout {
             Some(pipeline_layout_id) => {
-                let pipeline_layout = hub
-                    .pipeline_layouts
-                    .get(pipeline_layout_id)
-                    .map_err(|_| pipeline::CreateComputePipelineError::InvalidLayout)?;
+                let pipeline_layout = cx.result(
+                    hub.pipeline_layouts
+                        .get(pipeline_layout_id)
+                        .map_err(|_| pipeline::CreateComputePipelineError::InvalidLayout),
+                )?;
 
                 if pipeline_layout.device.as_info().id() != self.as_info().id() {
-                    return Err(DeviceError::WrongDevice.into());
+                    return Err(cx.report(DeviceError::WrongDevice));
                 }
 
                 Some(pipeline_layout)
@@ -2562,14 +2582,14 @@ impl<A: HalApi> Device<A> {
             let stage = wgt::ShaderStages::COMPUTE;
 
             if let Some(ref interface) = shader_module.interface {
-                let _ = interface.check_stage(
+                cx.result(interface.check_stage(
                     &mut binding_layout_source,
                     &mut shader_binding_sizes,
                     &desc.stage.entry_point,
                     stage,
                     io,
                     None,
-                )?;
+                ))?;
             }
         }
 
@@ -2579,6 +2599,7 @@ impl<A: HalApi> Device<A> {
                 pipeline_layout.unwrap()
             }
             validation::BindingLayoutSource::Derived(entries) => self.derive_pipeline_layout(
+                cx,
                 implicit_context,
                 entries,
                 &hub.bind_group_layouts,
@@ -2598,23 +2619,27 @@ impl<A: HalApi> Device<A> {
             },
         };
 
-        let raw = unsafe {
-            self.raw
-                .as_ref()
-                .unwrap()
-                .create_compute_pipeline(&pipeline_desc)
-        }
-        .map_err(|err| match err {
-            hal::PipelineError::Device(error) => {
-                pipeline::CreateComputePipelineError::Device(error.into())
+        let raw = cx.result(
+            unsafe {
+                self.raw
+                    .as_ref()
+                    .unwrap()
+                    .create_compute_pipeline(&pipeline_desc)
             }
-            hal::PipelineError::Linkage(_stages, msg) => {
-                pipeline::CreateComputePipelineError::Internal(msg)
-            }
-            hal::PipelineError::EntryPoint(_stage) => {
-                pipeline::CreateComputePipelineError::Internal(ENTRYPOINT_FAILURE_ERROR.to_string())
-            }
-        })?;
+            .map_err(|err| match err {
+                hal::PipelineError::Device(error) => {
+                    pipeline::CreateComputePipelineError::Device(error.into())
+                }
+                hal::PipelineError::Linkage(_stages, msg) => {
+                    pipeline::CreateComputePipelineError::Internal(msg)
+                }
+                hal::PipelineError::EntryPoint(_stage) => {
+                    pipeline::CreateComputePipelineError::Internal(
+                        ENTRYPOINT_FAILURE_ERROR.to_string(),
+                    )
+                }
+            }),
+        )?;
 
         let pipeline = pipeline::ComputePipeline {
             raw: Some(raw),
@@ -2629,11 +2654,12 @@ impl<A: HalApi> Device<A> {
 
     pub(crate) fn create_render_pipeline(
         self: &Arc<Self>,
+        cx: &mut Context<'_>,
         adapter: &Adapter<A>,
         desc: &pipeline::RenderPipelineDescriptor,
         implicit_context: Option<ImplicitPipelineContext>,
         hub: &Hub<A>,
-    ) -> Result<pipeline::RenderPipeline<A>, pipeline::CreateRenderPipelineError> {
+    ) -> Result<pipeline::RenderPipeline<A>, crate::Error> {
         use wgt::TextureFormatFeatureFlags as Tfff;
 
         // This has to be done first, or otherwise the IDs may be pointing to entries
@@ -2652,12 +2678,14 @@ impl<A: HalApi> Device<A> {
 
         let num_attachments = desc.fragment.as_ref().map(|f| f.targets.len()).unwrap_or(0);
         if num_attachments > hal::MAX_COLOR_ATTACHMENTS {
-            return Err(pipeline::CreateRenderPipelineError::ColorAttachment(
-                command::ColorAttachmentError::TooMany {
-                    given: num_attachments,
-                    limit: hal::MAX_COLOR_ATTACHMENTS,
-                },
-            ));
+            return Err(
+                cx.report(pipeline::CreateRenderPipelineError::ColorAttachment(
+                    command::ColorAttachmentError::TooMany {
+                        given: num_attachments,
+                        limit: hal::MAX_COLOR_ATTACHMENTS,
+                    },
+                )),
+            );
         }
 
         let color_targets = desc
@@ -2675,7 +2703,7 @@ impl<A: HalApi> Device<A> {
                 .any(|ct| ct.write_mask != first.write_mask || ct.blend != first.blend)
         } {
             log::debug!("Color targets: {:?}", color_targets);
-            self.require_downlevel_flags(wgt::DownlevelFlags::INDEPENDENT_BLEND)?;
+            cx.result(self.require_downlevel_flags(wgt::DownlevelFlags::INDEPENDENT_BLEND))?;
         }
 
         let mut io = validation::StageIo::default();
@@ -2695,17 +2723,21 @@ impl<A: HalApi> Device<A> {
                 continue;
             }
             if vb_state.array_stride > self.limits.max_vertex_buffer_array_stride as u64 {
-                return Err(pipeline::CreateRenderPipelineError::VertexStrideTooLarge {
-                    index: i as u32,
-                    given: vb_state.array_stride as u32,
-                    limit: self.limits.max_vertex_buffer_array_stride,
-                });
+                return Err(
+                    cx.report(pipeline::CreateRenderPipelineError::VertexStrideTooLarge {
+                        index: i as u32,
+                        given: vb_state.array_stride as u32,
+                        limit: self.limits.max_vertex_buffer_array_stride,
+                    }),
+                );
             }
             if vb_state.array_stride % wgt::VERTEX_STRIDE_ALIGNMENT != 0 {
-                return Err(pipeline::CreateRenderPipelineError::UnalignedVertexStride {
-                    index: i as u32,
-                    stride: vb_state.array_stride,
-                });
+                return Err(cx.report(
+                    pipeline::CreateRenderPipelineError::UnalignedVertexStride {
+                        index: i as u32,
+                        stride: vb_state.array_stride,
+                    },
+                ));
             }
             vertex_buffers.push(hal::VertexBufferLayout {
                 array_stride: vb_state.array_stride,
@@ -2715,12 +2747,12 @@ impl<A: HalApi> Device<A> {
 
             for attribute in vb_state.attributes.iter() {
                 if attribute.offset >= 0x10000000 {
-                    return Err(
+                    return Err(cx.report(
                         pipeline::CreateRenderPipelineError::InvalidVertexAttributeOffset {
                             location: attribute.shader_location,
                             offset: attribute.offset,
                         },
-                    );
+                    ));
                 }
 
                 if let wgt::VertexFormat::Float64
@@ -2728,7 +2760,7 @@ impl<A: HalApi> Device<A> {
                 | wgt::VertexFormat::Float64x3
                 | wgt::VertexFormat::Float64x4 = attribute.format
                 {
-                    self.require_features(wgt::Features::VERTEX_ATTRIBUTE_64BIT)?;
+                    cx.result(self.require_features(wgt::Features::VERTEX_ATTRIBUTE_64BIT))?;
                 }
 
                 let previous = io.insert(
@@ -2737,8 +2769,10 @@ impl<A: HalApi> Device<A> {
                 );
 
                 if previous.is_some() {
-                    return Err(pipeline::CreateRenderPipelineError::ShaderLocationClash(
-                        attribute.shader_location,
+                    return Err(cx.report(
+                        pipeline::CreateRenderPipelineError::ShaderLocationClash(
+                            attribute.shader_location,
+                        ),
                     ));
                 }
             }
@@ -2746,48 +2780,50 @@ impl<A: HalApi> Device<A> {
         }
 
         if vertex_buffers.len() > self.limits.max_vertex_buffers as usize {
-            return Err(pipeline::CreateRenderPipelineError::TooManyVertexBuffers {
-                given: vertex_buffers.len() as u32,
-                limit: self.limits.max_vertex_buffers,
-            });
+            return Err(
+                cx.report(pipeline::CreateRenderPipelineError::TooManyVertexBuffers {
+                    given: vertex_buffers.len() as u32,
+                    limit: self.limits.max_vertex_buffers,
+                }),
+            );
         }
         if total_attributes > self.limits.max_vertex_attributes as usize {
-            return Err(
+            return Err(cx.report(
                 pipeline::CreateRenderPipelineError::TooManyVertexAttributes {
                     given: total_attributes as u32,
                     limit: self.limits.max_vertex_attributes,
                 },
-            );
+            ));
         }
 
         if desc.primitive.strip_index_format.is_some() && !desc.primitive.topology.is_strip() {
-            return Err(
+            return Err(cx.report(
                 pipeline::CreateRenderPipelineError::StripIndexFormatForNonStripTopology {
                     strip_index_format: desc.primitive.strip_index_format,
                     topology: desc.primitive.topology,
                 },
-            );
+            ));
         }
 
         if desc.primitive.unclipped_depth {
-            self.require_features(wgt::Features::DEPTH_CLIP_CONTROL)?;
+            cx.result(self.require_features(wgt::Features::DEPTH_CLIP_CONTROL))?;
         }
 
         if desc.primitive.polygon_mode == wgt::PolygonMode::Line {
-            self.require_features(wgt::Features::POLYGON_MODE_LINE)?;
+            cx.result(self.require_features(wgt::Features::POLYGON_MODE_LINE))?;
         }
         if desc.primitive.polygon_mode == wgt::PolygonMode::Point {
-            self.require_features(wgt::Features::POLYGON_MODE_POINT)?;
+            cx.result(self.require_features(wgt::Features::POLYGON_MODE_POINT))?;
         }
 
         if desc.primitive.conservative {
-            self.require_features(wgt::Features::CONSERVATIVE_RASTERIZATION)?;
+            cx.result(self.require_features(wgt::Features::CONSERVATIVE_RASTERIZATION))?;
         }
 
         if desc.primitive.conservative && desc.primitive.polygon_mode != wgt::PolygonMode::Fill {
-            return Err(
+            return Err(cx.report(
                 pipeline::CreateRenderPipelineError::ConservativeRasterizationNonFillPolygonMode,
-            );
+            ));
         }
 
         for (i, cs) in color_targets.iter().enumerate() {
@@ -2797,7 +2833,8 @@ impl<A: HalApi> Device<A> {
                         break Some(pipeline::ColorStateError::InvalidWriteMask(cs.write_mask));
                     }
 
-                    let format_features = self.describe_format_features(adapter, cs.format)?;
+                    let format_features =
+                        cx.result(self.describe_format_features(adapter, cs.format))?;
                     if !format_features
                         .allowed_usages
                         .contains(wgt::TextureUsages::RENDER_ATTACHMENT)
@@ -2845,13 +2882,15 @@ impl<A: HalApi> Device<A> {
                             blend_mode.alpha.dst_factor,
                         ] {
                             if factor.ref_second_blend_source() {
-                                self.require_features(wgt::Features::DUAL_SOURCE_BLENDING)?;
+                                cx.result(
+                                    self.require_features(wgt::Features::DUAL_SOURCE_BLENDING),
+                                )?;
                                 if i == 0 {
                                     pipeline_expects_dual_source_blending = true;
                                     break;
                                 } else {
-                                    return Err(crate::pipeline::CreateRenderPipelineError
-                            ::BlendFactorOnUnsupportedTarget { factor, target: i as u32 });
+                                    return Err(cx.report(crate::pipeline::CreateRenderPipelineError
+                            ::BlendFactorOnUnsupportedTarget { factor, target: i as u32 }));
                                 }
                             }
                         }
@@ -2859,14 +2898,17 @@ impl<A: HalApi> Device<A> {
                     break None;
                 };
                 if let Some(e) = error {
-                    return Err(pipeline::CreateRenderPipelineError::ColorState(i as u8, e));
+                    return Err(
+                        cx.report(pipeline::CreateRenderPipelineError::ColorState(i as u8, e))
+                    );
                 }
             }
         }
 
         if let Some(ds) = depth_stencil_state {
             let error = loop {
-                let format_features = self.describe_format_features(adapter, ds.format)?;
+                let format_features =
+                    cx.result(self.describe_format_features(adapter, ds.format))?;
                 if !format_features
                     .allowed_usages
                     .contains(wgt::TextureUsages::RENDER_ATTACHMENT)
@@ -2907,24 +2949,25 @@ impl<A: HalApi> Device<A> {
                 break None;
             };
             if let Some(e) = error {
-                return Err(pipeline::CreateRenderPipelineError::DepthStencilState(e));
+                return Err(cx.report(pipeline::CreateRenderPipelineError::DepthStencilState(e)));
             }
 
             if ds.bias.clamp != 0.0 {
-                self.require_downlevel_flags(wgt::DownlevelFlags::DEPTH_BIAS_CLAMP)?;
+                cx.result(self.require_downlevel_flags(wgt::DownlevelFlags::DEPTH_BIAS_CLAMP))?;
             }
         }
 
         // Get the pipeline layout from the desc if it is provided.
         let pipeline_layout = match desc.layout {
             Some(pipeline_layout_id) => {
-                let pipeline_layout = hub
-                    .pipeline_layouts
-                    .get(pipeline_layout_id)
-                    .map_err(|_| pipeline::CreateRenderPipelineError::InvalidLayout)?;
+                let pipeline_layout = cx.result(
+                    hub.pipeline_layouts
+                        .get(pipeline_layout_id)
+                        .map_err(|_| pipeline::CreateRenderPipelineError::InvalidLayout),
+                )?;
 
                 if pipeline_layout.device.as_info().id() != self.as_info().id() {
-                    return Err(DeviceError::WrongDevice.into());
+                    return Err(cx.report(DeviceError::WrongDevice));
                 }
 
                 Some(pipeline_layout)
@@ -2942,7 +2985,7 @@ impl<A: HalApi> Device<A> {
         let samples = {
             let sc = desc.multisample.count;
             if sc == 0 || sc > 32 || !conv::is_power_of_two_u32(sc) {
-                return Err(pipeline::CreateRenderPipelineError::InvalidSampleCount(sc));
+                return Err(cx.report(pipeline::CreateRenderPipelineError::InvalidSampleCount(sc)));
             }
             sc
         };
@@ -2952,27 +2995,34 @@ impl<A: HalApi> Device<A> {
             let stage_desc = &desc.vertex.stage;
             let stage = wgt::ShaderStages::VERTEX;
 
-            vertex_shader_module = hub.shader_modules.get(stage_desc.module).map_err(|_| {
-                pipeline::CreateRenderPipelineError::Stage {
-                    stage,
-                    error: validation::StageError::InvalidModule,
-                }
-            })?;
+            vertex_shader_module =
+                cx.result(hub.shader_modules.get(stage_desc.module).map_err(|_| {
+                    pipeline::CreateRenderPipelineError::Stage {
+                        stage,
+                        error: validation::StageError::InvalidModule,
+                    }
+                }))?;
+
             if vertex_shader_module.device.as_info().id() != self.as_info().id() {
-                return Err(DeviceError::WrongDevice.into());
+                return Err(cx.report(DeviceError::WrongDevice));
             }
 
             if let Some(ref interface) = vertex_shader_module.interface {
-                io = interface
-                    .check_stage(
-                        &mut binding_layout_source,
-                        &mut shader_binding_sizes,
-                        &stage_desc.entry_point,
-                        stage,
-                        io,
-                        desc.depth_stencil.as_ref().map(|d| d.depth_compare),
-                    )
-                    .map_err(|error| pipeline::CreateRenderPipelineError::Stage { stage, error })?;
+                io = cx.result(
+                    interface
+                        .check_stage(
+                            &mut binding_layout_source,
+                            &mut shader_binding_sizes,
+                            &stage_desc.entry_point,
+                            stage,
+                            io,
+                            desc.depth_stencil.as_ref().map(|d| d.depth_compare),
+                        )
+                        .map_err(|error| pipeline::CreateRenderPipelineError::Stage {
+                            stage,
+                            error,
+                        }),
+                )?;
                 validated_stages |= stage;
             }
 
@@ -2987,41 +3037,46 @@ impl<A: HalApi> Device<A> {
             Some(ref fragment_state) => {
                 let stage = wgt::ShaderStages::FRAGMENT;
 
-                let shader_module = fragment_shader_module.insert(
-                    hub.shader_modules
-                        .get(fragment_state.stage.module)
-                        .map_err(|_| pipeline::CreateRenderPipelineError::Stage {
-                            stage,
-                            error: validation::StageError::InvalidModule,
-                        })?,
-                );
+                let shader_module =
+                    fragment_shader_module.insert(
+                        cx.result(hub.shader_modules.get(fragment_state.stage.module).map_err(
+                            |_| pipeline::CreateRenderPipelineError::Stage {
+                                stage,
+                                error: validation::StageError::InvalidModule,
+                            },
+                        ))?,
+                    );
 
                 if validated_stages == wgt::ShaderStages::VERTEX {
                     if let Some(ref interface) = shader_module.interface {
-                        io = interface
-                            .check_stage(
-                                &mut binding_layout_source,
-                                &mut shader_binding_sizes,
-                                &fragment_state.stage.entry_point,
-                                stage,
-                                io,
-                                desc.depth_stencil.as_ref().map(|d| d.depth_compare),
-                            )
-                            .map_err(|error| pipeline::CreateRenderPipelineError::Stage {
-                                stage,
-                                error,
-                            })?;
+                        io = cx.result(
+                            interface
+                                .check_stage(
+                                    &mut binding_layout_source,
+                                    &mut shader_binding_sizes,
+                                    &fragment_state.stage.entry_point,
+                                    stage,
+                                    io,
+                                    desc.depth_stencil.as_ref().map(|d| d.depth_compare),
+                                )
+                                .map_err(|error| pipeline::CreateRenderPipelineError::Stage {
+                                    stage,
+                                    error,
+                                }),
+                        )?;
                         validated_stages |= stage;
                     }
                 }
 
                 if let Some(ref interface) = shader_module.interface {
-                    shader_expects_dual_source_blending = interface
-                        .fragment_uses_dual_source_blending(&fragment_state.stage.entry_point)
-                        .map_err(|error| pipeline::CreateRenderPipelineError::Stage {
-                            stage,
-                            error,
-                        })?;
+                    shader_expects_dual_source_blending = cx.result(
+                        interface
+                            .fragment_uses_dual_source_blending(&fragment_state.stage.entry_point)
+                            .map_err(|error| pipeline::CreateRenderPipelineError::Stage {
+                                stage,
+                                error,
+                            }),
+                    )?;
                 }
 
                 Some(hal::ProgrammableStage {
@@ -3033,30 +3088,32 @@ impl<A: HalApi> Device<A> {
         };
 
         if !pipeline_expects_dual_source_blending && shader_expects_dual_source_blending {
-            return Err(
+            return Err(cx.report(
                 pipeline::CreateRenderPipelineError::ShaderExpectsPipelineToUseDualSourceBlending,
-            );
+            ));
         }
         if pipeline_expects_dual_source_blending && !shader_expects_dual_source_blending {
-            return Err(
+            return Err(cx.report(
                 pipeline::CreateRenderPipelineError::PipelineExpectsShaderToUseDualSourceBlending,
-            );
+            ));
         }
 
         if validated_stages.contains(wgt::ShaderStages::FRAGMENT) {
             for (i, output) in io.iter() {
                 match color_targets.get(*i as usize) {
                     Some(Some(state)) => {
-                        validation::check_texture_format(state.format, &output.ty).map_err(
-                            |pipeline| {
-                                pipeline::CreateRenderPipelineError::ColorState(
-                                    *i as u8,
-                                    pipeline::ColorStateError::IncompatibleFormat {
-                                        pipeline,
-                                        shader: output.ty,
-                                    },
-                                )
-                            },
+                        cx.result(
+                            validation::check_texture_format(state.format, &output.ty).map_err(
+                                |pipeline| {
+                                    pipeline::CreateRenderPipelineError::ColorState(
+                                        *i as u8,
+                                        pipeline::ColorStateError::IncompatibleFormat {
+                                            pipeline,
+                                            shader: output.ty,
+                                        },
+                                    )
+                                },
+                            ),
                         )?;
                     }
                     _ => {
@@ -3076,7 +3133,7 @@ impl<A: HalApi> Device<A> {
             None => wgt::ShaderStages::VERTEX,
         };
         if desc.layout.is_none() && !validated_stages.contains(last_stage) {
-            return Err(pipeline::ImplicitLayoutError::ReflectionError(last_stage).into());
+            return Err(cx.report(pipeline::ImplicitLayoutError::ReflectionError(last_stage)));
         }
 
         let pipeline_layout = match binding_layout_source {
@@ -3085,6 +3142,7 @@ impl<A: HalApi> Device<A> {
                 pipeline_layout.unwrap()
             }
             validation::BindingLayoutSource::Derived(entries) => self.derive_pipeline_layout(
+                cx,
                 implicit_context,
                 entries,
                 &hub.bind_group_layouts,
@@ -3094,7 +3152,7 @@ impl<A: HalApi> Device<A> {
 
         // Multiview is only supported if the feature is enabled
         if desc.multiview.is_some() {
-            self.require_features(wgt::Features::MULTIVIEW)?;
+            cx.result(self.require_features(wgt::Features::MULTIVIEW))?;
         }
 
         if !self
@@ -3104,11 +3162,13 @@ impl<A: HalApi> Device<A> {
         {
             for (binding, size) in shader_binding_sizes.iter() {
                 if size.get() % 16 != 0 {
-                    return Err(pipeline::CreateRenderPipelineError::UnalignedShader {
-                        binding: binding.binding,
-                        group: binding.group,
-                        size: size.get(),
-                    });
+                    return Err(
+                        cx.report(pipeline::CreateRenderPipelineError::UnalignedShader {
+                            binding: binding.binding,
+                            group: binding.group,
+                            size: size.get(),
+                        }),
+                    );
                 }
             }
         }
@@ -3128,26 +3188,28 @@ impl<A: HalApi> Device<A> {
             color_targets,
             multiview: desc.multiview,
         };
-        let raw = unsafe {
-            self.raw
-                .as_ref()
-                .unwrap()
-                .create_render_pipeline(&pipeline_desc)
-        }
-        .map_err(|err| match err {
-            hal::PipelineError::Device(error) => {
-                pipeline::CreateRenderPipelineError::Device(error.into())
+        let raw = cx.result(
+            unsafe {
+                self.raw
+                    .as_ref()
+                    .unwrap()
+                    .create_render_pipeline(&pipeline_desc)
             }
-            hal::PipelineError::Linkage(stage, msg) => {
-                pipeline::CreateRenderPipelineError::Internal { stage, error: msg }
-            }
-            hal::PipelineError::EntryPoint(stage) => {
-                pipeline::CreateRenderPipelineError::Internal {
-                    stage: hal::auxil::map_naga_stage(stage),
-                    error: ENTRYPOINT_FAILURE_ERROR.to_string(),
+            .map_err(|err| match err {
+                hal::PipelineError::Device(error) => {
+                    pipeline::CreateRenderPipelineError::Device(error.into())
                 }
-            }
-        })?;
+                hal::PipelineError::Linkage(stage, msg) => {
+                    pipeline::CreateRenderPipelineError::Internal { stage, error: msg }
+                }
+                hal::PipelineError::EntryPoint(stage) => {
+                    pipeline::CreateRenderPipelineError::Internal {
+                        stage: hal::auxil::map_naga_stage(stage),
+                        error: ENTRYPOINT_FAILURE_ERROR.to_string(),
+                    }
+                }
+            }),
+        )?;
 
         let pass_context = RenderPassContext {
             attachments: AttachmentData {

@@ -231,6 +231,46 @@ impl ContextWgpuCore {
         self.0.generate_report()
     }
 
+    fn handle_diagnostics(
+        &self,
+        cx: &mut wgc::Context<'_>,
+        sink_mutex: &Mutex<ErrorSinkRaw>,
+        label_key: &'static str,
+        label: Label<'_>,
+        string: &'static str,
+    ) {
+        if cx.is_empty() {
+            return;
+        }
+
+        for cause in cx.drain() {
+            let error = wgc::error::ContextError {
+                string,
+                cause: Box::new(cause),
+                label: label.unwrap_or_default().to_string(),
+                label_key,
+            };
+            let mut sink = sink_mutex.lock();
+            let mut source_opt: Option<&(dyn Error + 'static)> = Some(&error);
+            while let Some(source) = source_opt {
+                if let Some(wgc::device::DeviceError::OutOfMemory) =
+                    source.downcast_ref::<wgc::device::DeviceError>()
+                {
+                    return sink.handle_error(crate::Error::OutOfMemory {
+                        source: Box::new(error),
+                    });
+                }
+                source_opt = source.source();
+            }
+
+            // Otherwise, it is a validation error
+            sink.handle_error(crate::Error::Validation {
+                description: self.format_error(&error),
+                source: Box::new(error),
+            });
+        }
+    }
+
     fn handle_error(
         &self,
         sink_mutex: &Mutex<ErrorSinkRaw>,
@@ -922,18 +962,19 @@ impl crate::Context for ContextWgpuCore {
             label: desc.label.map(Borrowed),
             entries: Borrowed(desc.entries),
         };
-        let (id, error) = wgc::gfx_select!(
-            device => self.0.device_create_bind_group_layout(*device, &descriptor, ())
+        let mut cx = wgc::Context::new();
+        let id = wgc::gfx_select!(
+            device => self.0.device_create_bind_group_layout(&mut cx, *device, &descriptor, ())
         );
-        if let Some(cause) = error {
-            self.handle_error(
-                &device_data.error_sink,
-                cause,
-                LABEL,
-                desc.label,
-                "Device::create_bind_group_layout",
-            );
-        }
+
+        self.handle_diagnostics(
+            &mut cx,
+            &device_data.error_sink,
+            LABEL,
+            desc.label,
+            "Device::create_bind_group_layout",
+        );
+
         (id, ())
     }
     fn device_create_bind_group(
@@ -1141,25 +1182,34 @@ impl crate::Context for ContextWgpuCore {
             multiview: desc.multiview,
         };
 
-        let (id, error) = wgc::gfx_select!(device => self.0.device_create_render_pipeline(
+        let mut cx = wgc::Context::new();
+
+        let id = wgc::gfx_select!(device => self.0.device_create_render_pipeline(
+            &mut cx,
             *device,
             &descriptor,
             (),
             implicit_pipeline_ids
         ));
-        if let Some(cause) = error {
-            if let wgc::pipeline::CreateRenderPipelineError::Internal { stage, ref error } = cause {
+
+        for error in cx.iter() {
+            if let wgc::Diagnostic::CreateRenderPipelineError(
+                wgc::pipeline::CreateRenderPipelineError::Internal { stage, ref error },
+            ) = *error
+            {
                 log::error!("Shader translation error for stage {:?}: {}", stage, error);
                 log::error!("Please report it to https://github.com/gfx-rs/wgpu");
             }
-            self.handle_error(
-                &device_data.error_sink,
-                cause,
-                LABEL,
-                desc.label,
-                "Device::create_render_pipeline",
-            );
         }
+
+        self.handle_diagnostics(
+            &mut cx,
+            &device_data.error_sink,
+            LABEL,
+            desc.label,
+            "Device::create_render_pipeline",
+        );
+
         (id, ())
     }
     fn device_create_compute_pipeline(
@@ -1186,29 +1236,40 @@ impl crate::Context for ContextWgpuCore {
             },
         };
 
-        let (id, error) = wgc::gfx_select!(device => self.0.device_create_compute_pipeline(
+        let mut cx = wgc::Context::new();
+
+        let id = wgc::gfx_select!(device => self.0.device_create_compute_pipeline(
+            &mut cx,
             *device,
             &descriptor,
             (),
             implicit_pipeline_ids
         ));
-        if let Some(cause) = error {
-            if let wgc::pipeline::CreateComputePipelineError::Internal(ref error) = cause {
-                log::error!(
-                    "Shader translation error for stage {:?}: {}",
-                    wgt::ShaderStages::COMPUTE,
-                    error
-                );
-                log::error!("Please report it to https://github.com/gfx-rs/wgpu");
+
+        if cx.is_empty() {
+            for error in cx.iter() {
+                if let wgc::Diagnostic::CreateComputePipelineError(
+                    wgc::pipeline::CreateComputePipelineError::Internal(ref error),
+                ) = *error
+                {
+                    log::error!(
+                        "Shader translation error for stage {:?}: {}",
+                        wgt::ShaderStages::COMPUTE,
+                        error
+                    );
+                    log::error!("Please report it to https://github.com/gfx-rs/wgpu");
+                }
             }
-            self.handle_error(
+
+            self.handle_diagnostics(
+                &mut cx,
                 &device_data.error_sink,
-                cause,
                 LABEL,
                 desc.label,
                 "Device::create_compute_pipeline",
             );
         }
+
         (id, ())
     }
     fn device_create_buffer(

@@ -225,8 +225,11 @@ impl GlobalPlay for wgc::global::Global<IdentityPassThroughFactory> {
                     .unwrap();
             }
             Action::CreateBindGroupLayout(id, desc) => {
-                let (_, error) = self.device_create_bind_group_layout::<A>(device, &desc, id);
-                if let Some(e) = error {
+                let mut cx = wgc::Context::new();
+
+                self.device_create_bind_group_layout::<A>(&mut cx, device, &desc, id);
+
+                for e in cx.drain() {
                     panic!("{e}");
                 }
             }
@@ -285,9 +288,12 @@ impl GlobalPlay for wgc::global::Global<IdentityPassThroughFactory> {
                             root_id: ic.root_id,
                             group_ids: &ic.group_ids,
                         });
-                let (_, error) =
-                    self.device_create_compute_pipeline::<A>(device, &desc, id, implicit_ids);
-                if let Some(e) = error {
+
+                let mut cx = wgc::Context::new();
+
+                self.device_create_compute_pipeline::<A>(&mut cx, device, &desc, id, implicit_ids);
+
+                for e in cx.drain() {
                     panic!("{e}");
                 }
             }
@@ -307,9 +313,12 @@ impl GlobalPlay for wgc::global::Global<IdentityPassThroughFactory> {
                             root_id: ic.root_id,
                             group_ids: &ic.group_ids,
                         });
-                let (_, error) =
-                    self.device_create_render_pipeline::<A>(device, &desc, id, implicit_ids);
-                if let Some(e) = error {
+
+                let mut cx = wgc::Context::new();
+
+                self.device_create_render_pipeline::<A>(&mut cx, device, &desc, id, implicit_ids);
+
+                for e in cx.drain() {
                     panic!("{e}");
                 }
             }

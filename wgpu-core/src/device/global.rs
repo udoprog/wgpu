@@ -16,7 +16,7 @@ use crate::{
     resource::{self, BufferAccessResult},
     resource::{BufferAccessError, BufferMapOperation, CreateBufferError, Resource},
     validation::check_buffer_usage,
-    Label, LabelHelpers as _,
+    Context, Label, LabelHelpers as _,
 };
 
 use arrayvec::ArrayVec;
@@ -926,25 +926,20 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
     pub fn device_create_bind_group_layout<A: HalApi>(
         &self,
+        cx: &mut Context<'_>,
         device_id: DeviceId,
         desc: &binding_model::BindGroupLayoutDescriptor,
         id_in: Input<G, id::BindGroupLayoutId>,
-    ) -> (
-        id::BindGroupLayoutId,
-        Option<binding_model::CreateBindGroupLayoutError>,
-    ) {
+    ) -> id::BindGroupLayoutId {
         profiling::scope!("Device::create_bind_group_layout");
 
         let hub = A::hub(self);
-        let fid = hub.bind_group_layouts.prepare::<G>(id_in);
 
-        let error = loop {
-            let device = match hub.devices.get(device_id) {
-                Ok(device) => device,
-                Err(_) => break DeviceError::Invalid.into(),
-            };
+        let result = try_block(|| {
+            let device = cx.result(hub.devices.get(device_id).map_err(|_| DeviceError::Invalid))?;
+
             if !device.is_valid() {
-                break DeviceError::Lost.into();
+                return Err(cx.report(DeviceError::Lost));
             }
 
             #[cfg(feature = "trace")]
@@ -952,10 +947,8 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                 trace.add(trace::Action::CreateBindGroupLayout(fid.id(), desc.clone()));
             }
 
-            let entry_map = match bgl::EntryMap::from_entries(&device.limits, &desc.entries) {
-                Ok(map) => map,
-                Err(e) => break e,
-            };
+            let entry_map =
+                cx.result(bgl::EntryMap::from_entries(&device.limits, &desc.entries))?;
 
             // Currently we make a distinction between fid.assign and fid.assign_existing. This distinction is incorrect,
             // but see https://github.com/gfx-rs/wgpu/issues/4912.
@@ -966,25 +959,22 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             // Because we need to call `assign` inside the closure (to get mut access), we need to "move" the future id into the closure.
             // Rust cannot figure out at compile time that we only ever consume the ID once, so we need to move the check
             // to runtime using an Option.
-            let mut fid = Some(fid);
+            let mut fid = Some(hub.bind_group_layouts.prepare::<G>(id_in));
 
-            // The closure might get called, and it might give us an ID. Side channel it out of the closure.
             let mut id = None;
 
-            let bgl_result = device.bgl_pool.get_or_init(entry_map, |entry_map| {
-                let bgl =
-                    device.create_bind_group_layout(&desc.label, entry_map, bgl::Origin::Pool)?;
+            let layout = device.bgl_pool.get_or_init(entry_map, |entry_map| {
+                let bgl = device.create_bind_group_layout(
+                    cx,
+                    &desc.label,
+                    entry_map,
+                    bgl::Origin::Pool,
+                )?;
 
-                let (id_inner, arc) = fid.take().unwrap().assign(bgl);
-                id = Some(id_inner);
-
-                Ok(arc)
-            });
-
-            let layout = match bgl_result {
-                Ok(layout) => layout,
-                Err(e) => break e,
-            };
+                let (new_id, bgl) = fid.take().unwrap().assign(bgl);
+                id = Some(new_id);
+                Ok(bgl)
+            })?;
 
             // If the ID was not assigned, and we survived the above check,
             // it means that the bind group layout already existed and we need to call `assign_existing`.
@@ -995,12 +985,17 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             }
 
             api_log!("Device::create_bind_group_layout -> {id:?}");
-            return (id.unwrap(), None);
-        };
+            Ok(id.unwrap())
+        });
 
-        let fid = hub.bind_group_layouts.prepare::<G>(id_in);
-        let id = fid.assign_error(desc.label.borrow_or_default());
-        (id, Some(error))
+        match result {
+            Ok(id) => id,
+            Err(crate::Error) => {
+                let fid = hub.bind_group_layouts.prepare::<G>(id_in);
+                let id = fid.assign_error(desc.label.borrow_or_default());
+                id
+            }
+        }
     }
 
     pub fn bind_group_layout_label<A: HalApi>(&self, id: id::BindGroupLayoutId) -> String {
@@ -1529,14 +1524,12 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
     pub fn device_create_render_pipeline<A: HalApi>(
         &self,
+        cx: &mut Context<'_>,
         device_id: DeviceId,
         desc: &pipeline::RenderPipelineDescriptor,
         id_in: Input<G, id::RenderPipelineId>,
         implicit_pipeline_ids: Option<ImplicitPipelineIds<G>>,
-    ) -> (
-        id::RenderPipelineId,
-        Option<pipeline::CreateRenderPipelineError>,
-    ) {
+    ) -> id::RenderPipelineId {
         profiling::scope!("Device::create_render_pipeline");
 
         let hub = A::hub(self);
@@ -1545,14 +1538,13 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let implicit_context = implicit_pipeline_ids.map(|ipi| ipi.prepare(hub));
         let implicit_error_context = implicit_context.clone();
 
-        let error = loop {
-            let device = match hub.devices.get(device_id) {
-                Ok(device) => device,
-                Err(_) => break DeviceError::Invalid.into(),
-            };
+        let result = try_block(|| {
+            let device = cx.result(hub.devices.get(device_id).map_err(|_| DeviceError::Invalid))?;
+
             if !device.is_valid() {
-                break DeviceError::Lost.into();
+                return Err(cx.report(DeviceError::Lost));
             }
+
             #[cfg(feature = "trace")]
             if let Some(ref mut trace) = *device.trace.lock() {
                 trace.add(trace::Action::CreateRenderPipeline {
@@ -1563,45 +1555,48 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             }
 
             let pipeline =
-                match device.create_render_pipeline(&device.adapter, desc, implicit_context, hub) {
-                    Ok(pair) => pair,
-                    Err(e) => break e,
-                };
+                device.create_render_pipeline(cx, &device.adapter, desc, implicit_context, hub)?;
 
-            let (id, resource) = fid.assign(pipeline);
-            api_log!("Device::create_render_pipeline -> {id:?}");
+            Ok((device, pipeline))
+        });
 
-            device
-                .trackers
-                .lock()
-                .render_pipelines
-                .insert_single(id, resource);
+        match result {
+            Ok((device, pipeline)) => {
+                let (id, resource) = fid.assign(pipeline);
+                api_log!("Device::create_render_pipeline -> {id:?}");
 
-            return (id, None);
-        };
+                device
+                    .trackers
+                    .lock()
+                    .render_pipelines
+                    .insert_single(id, resource);
 
-        let id = fid.assign_error(desc.label.borrow_or_default());
-
-        // We also need to assign errors to the implicit pipeline layout and the
-        // implicit bind group layout. We have to remove any existing entries first.
-        let mut pipeline_layout_guard = hub.pipeline_layouts.write();
-        let mut bgl_guard = hub.bind_group_layouts.write();
-        if let Some(ref ids) = implicit_error_context {
-            if pipeline_layout_guard.contains(ids.root_id) {
-                pipeline_layout_guard.remove(ids.root_id);
+                id
             }
-            pipeline_layout_guard.insert_error(ids.root_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
-            for &bgl_id in ids.group_ids.iter() {
-                if bgl_guard.contains(bgl_id) {
-                    bgl_guard.remove(bgl_id);
+            Err(crate::Error) => {
+                let id = fid.assign_error(desc.label.borrow_or_default());
+
+                // We also need to assign errors to the implicit pipeline layout and the
+                // implicit bind group layout. We have to remove any existing entries first.
+                let mut pipeline_layout_guard = hub.pipeline_layouts.write();
+                let mut bgl_guard = hub.bind_group_layouts.write();
+                if let Some(ref ids) = implicit_error_context {
+                    if pipeline_layout_guard.contains(ids.root_id) {
+                        pipeline_layout_guard.remove(ids.root_id);
+                    }
+                    pipeline_layout_guard
+                        .insert_error(ids.root_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
+                    for &bgl_id in ids.group_ids.iter() {
+                        if bgl_guard.contains(bgl_id) {
+                            bgl_guard.remove(bgl_id);
+                        }
+                        bgl_guard.insert_error(bgl_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
+                    }
                 }
-                bgl_guard.insert_error(bgl_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
+
+                id
             }
         }
-
-        log::error!("Device::create_render_pipeline error: {error}");
-
-        (id, Some(error))
     }
 
     /// Get an ID of one of the bind group layouts. The ID adds a refcount,
@@ -1667,14 +1662,12 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
     pub fn device_create_compute_pipeline<A: HalApi>(
         &self,
+        cx: &mut Context<'_>,
         device_id: DeviceId,
         desc: &pipeline::ComputePipelineDescriptor,
         id_in: Input<G, id::ComputePipelineId>,
         implicit_pipeline_ids: Option<ImplicitPipelineIds<G>>,
-    ) -> (
-        id::ComputePipelineId,
-        Option<pipeline::CreateComputePipelineError>,
-    ) {
+    ) -> id::ComputePipelineId {
         profiling::scope!("Device::create_compute_pipeline");
 
         let hub = A::hub(self);
@@ -1683,13 +1676,11 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         let implicit_context = implicit_pipeline_ids.map(|ipi| ipi.prepare(hub));
         let implicit_error_context = implicit_context.clone();
 
-        let error = loop {
-            let device = match hub.devices.get(device_id) {
-                Ok(device) => device,
-                Err(_) => break DeviceError::Invalid.into(),
-            };
+        let result = try_block(|| {
+            let device = cx.result(hub.devices.get(device_id).map_err(|_| DeviceError::Invalid))?;
+
             if !device.is_valid() {
-                break DeviceError::Lost.into();
+                return Err(cx.report(DeviceError::Lost));
             }
 
             #[cfg(feature = "trace")]
@@ -1700,41 +1691,49 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                     implicit_context: implicit_context.clone(),
                 });
             }
-            let pipeline = match device.create_compute_pipeline(desc, implicit_context, hub) {
-                Ok(pair) => pair,
-                Err(e) => break e,
-            };
 
-            let (id, resource) = fid.assign(pipeline);
-            api_log!("Device::create_compute_pipeline -> {id:?}");
+            let pipeline = device.create_compute_pipeline(cx, desc, implicit_context, hub)?;
+            Ok((device, pipeline))
+        });
 
-            device
-                .trackers
-                .lock()
-                .compute_pipelines
-                .insert_single(id, resource);
-            return (id, None);
-        };
+        match result {
+            Ok((device, pipeline)) => {
+                let (id, resource) = fid.assign(pipeline);
+                api_log!("Device::create_compute_pipeline -> {id:?}");
 
-        let id = fid.assign_error(desc.label.borrow_or_default());
+                device
+                    .trackers
+                    .lock()
+                    .compute_pipelines
+                    .insert_single(id, resource);
 
-        // We also need to assign errors to the implicit pipeline layout and the
-        // implicit bind group layout. We have to remove any existing entries first.
-        let mut pipeline_layout_guard = hub.pipeline_layouts.write();
-        let mut bgl_guard = hub.bind_group_layouts.write();
-        if let Some(ref ids) = implicit_error_context {
-            if pipeline_layout_guard.contains(ids.root_id) {
-                pipeline_layout_guard.remove(ids.root_id);
+                id
             }
-            pipeline_layout_guard.insert_error(ids.root_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
-            for &bgl_id in ids.group_ids.iter() {
-                if bgl_guard.contains(bgl_id) {
-                    bgl_guard.remove(bgl_id);
+            Err(crate::Error) => {
+                let id = fid.assign_error(desc.label.borrow_or_default());
+
+                // We also need to assign errors to the implicit pipeline layout and the
+                // implicit bind group layout. We have to remove any existing entries first.
+                let mut pipeline_layout_guard = hub.pipeline_layouts.write();
+                let mut bgl_guard = hub.bind_group_layouts.write();
+
+                if let Some(ref ids) = implicit_error_context {
+                    if pipeline_layout_guard.contains(ids.root_id) {
+                        pipeline_layout_guard.remove(ids.root_id);
+                    }
+                    pipeline_layout_guard
+                        .insert_error(ids.root_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
+                    for &bgl_id in ids.group_ids.iter() {
+                        if bgl_guard.contains(bgl_id) {
+                            bgl_guard.remove(bgl_id);
+                        }
+                        bgl_guard.insert_error(bgl_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
+                    }
                 }
-                bgl_guard.insert_error(bgl_id, IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL);
+
+                id
             }
         }
-        (id, Some(error))
     }
 
     /// Get an ID of one of the bind group layouts. The ID adds a refcount,
@@ -2531,4 +2530,14 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         buffer.unmap()
     }
+}
+
+/// Helper to evaluate a callback, which aids in making the implementation of
+/// the infallible methods above cleaner.
+#[inline(always)]
+pub(crate) fn try_block<F, T>(cb: F) -> Result<T, crate::Error>
+where
+    F: FnOnce() -> Result<T, crate::Error>,
+{
+    cb()
 }
