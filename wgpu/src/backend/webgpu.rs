@@ -17,7 +17,7 @@ use std::{
 use wasm_bindgen::{prelude::*, JsCast};
 
 use crate::{
-    context::{downcast_ref, ObjectId, QueueWriteBuffer, Unused},
+    context::{downcast_ref, ObjectId, QueueWriteBuffer},
     SurfaceTargetUnsafe, UncapturedErrorHandler,
 };
 
@@ -1019,13 +1019,10 @@ impl crate::context::Context for ContextWebGpu {
     type ComputePipelineData = Sendable<web_sys::GpuComputePipeline>;
     type CommandEncoderId = Identified<web_sys::GpuCommandEncoder>;
     type CommandEncoderData = Sendable<web_sys::GpuCommandEncoder>;
-    type ComputePassId = Identified<web_sys::GpuComputePassEncoder>;
     type ComputePassData = Sendable<web_sys::GpuComputePassEncoder>;
-    type RenderPassId = Identified<web_sys::GpuRenderPassEncoder>;
     type RenderPassData = Sendable<web_sys::GpuRenderPassEncoder>;
     type CommandBufferId = Identified<web_sys::GpuCommandBuffer>;
     type CommandBufferData = Sendable<web_sys::GpuCommandBuffer>;
-    type RenderBundleEncoderId = Identified<web_sys::GpuRenderBundleEncoder>;
     type RenderBundleEncoderData = Sendable<web_sys::GpuRenderBundleEncoder>;
     type RenderBundleId = Identified<web_sys::GpuRenderBundle>;
     type RenderBundleData = Sendable<web_sys::GpuRenderBundle>;
@@ -1033,7 +1030,6 @@ impl crate::context::Context for ContextWebGpu {
     type SurfaceData = Sendable<(Canvas, web_sys::GpuCanvasContext)>;
 
     type SurfaceOutputDetail = SurfaceOutputDetail;
-    type SubmissionIndex = Unused;
     type SubmissionIndexData = ();
 
     type RequestAdapterFuture = MakeSendFuture<
@@ -1919,7 +1915,7 @@ impl crate::context::Context for ContextWebGpu {
         _device: &Self::DeviceId,
         device_data: &Self::DeviceData,
         desc: &crate::RenderBundleEncoderDescriptor<'_>,
-    ) -> (Self::RenderBundleEncoderId, Self::RenderBundleEncoderData) {
+    ) -> Self::RenderBundleEncoderData {
         let mapped_color_formats = desc
             .color_formats
             .iter()
@@ -1938,7 +1934,7 @@ impl crate::context::Context for ContextWebGpu {
             mapped_desc.stencil_read_only(ds.stencil_read_only);
         }
         mapped_desc.sample_count(desc.sample_count);
-        create_identified(device_data.0.create_render_bundle_encoder(&mapped_desc))
+        Sendable(device_data.0.create_render_bundle_encoder(&mapped_desc))
     }
 
     fn device_drop(&self, _device: &Self::DeviceId, _device_data: &Self::DeviceData) {
@@ -2299,12 +2295,13 @@ impl crate::context::Context for ContextWebGpu {
         _encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
         desc: &crate::ComputePassDescriptor<'_>,
-    ) -> (Self::ComputePassId, Self::ComputePassData) {
+    ) -> Self::ComputePassData {
         let mut mapped_desc = web_sys::GpuComputePassDescriptor::new();
         if let Some(label) = desc.label {
             mapped_desc.label(label);
         }
-        create_identified(
+
+        Sendable(
             encoder_data
                 .0
                 .begin_compute_pass_with_descriptor(&mapped_desc),
@@ -2315,7 +2312,6 @@ impl crate::context::Context for ContextWebGpu {
         &self,
         _encoder: &Self::CommandEncoderId,
         _encoder_data: &Self::CommandEncoderData,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
     ) {
         pass_data.0.end();
@@ -2326,7 +2322,7 @@ impl crate::context::Context for ContextWebGpu {
         _encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
         desc: &crate::RenderPassDescriptor<'_, '_>,
-    ) -> (Self::RenderPassId, Self::RenderPassData) {
+    ) -> Self::RenderPassData {
         let mapped_color_attachments = desc
             .color_attachments
             .iter()
@@ -2403,14 +2399,13 @@ impl crate::context::Context for ContextWebGpu {
             mapped_desc.depth_stencil_attachment(&mapped_depth_stencil_attachment);
         }
 
-        create_identified(encoder_data.0.begin_render_pass(&mapped_desc))
+        Sendable(encoder_data.0.begin_render_pass(&mapped_desc))
     }
 
     fn command_encoder_end_render_pass(
         &self,
         _encoder: &Self::CommandEncoderId,
         _encoder_data: &Self::CommandEncoderData,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
     ) {
         pass_data.0.end();
@@ -2528,7 +2523,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_finish(
         &self,
-        _encoder: Self::RenderBundleEncoderId,
         encoder_data: Self::RenderBundleEncoderData,
         desc: &crate::RenderBundleDescriptor<'_>,
     ) -> (Self::RenderBundleId, Self::RenderBundleData) {
@@ -2701,14 +2695,12 @@ impl crate::context::Context for ContextWebGpu {
         _queue: &Self::QueueId,
         queue_data: &Self::QueueData,
         command_buffers: I,
-    ) -> (Self::SubmissionIndex, Self::SubmissionIndexData) {
+    ) -> Self::SubmissionIndexData {
         let temp_command_buffers = command_buffers
             .map(|(_, data)| data.0)
             .collect::<js_sys::Array>();
 
         queue_data.0.submit(&temp_command_buffers);
-
-        (Unused, ())
     }
 
     fn queue_get_timestamp_period(
@@ -2734,7 +2726,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn compute_pass_set_pipeline(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         _pipeline: &Self::ComputePipelineId,
         pipeline_data: &Self::ComputePipelineData,
@@ -2744,7 +2735,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn compute_pass_set_bind_group(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         index: u32,
         _bind_group: &Self::BindGroupId,
@@ -2768,7 +2758,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn compute_pass_set_push_constants(
         &self,
-        _pass: &mut Self::ComputePassId,
         _pass_data: &mut Self::ComputePassData,
         _offset: u32,
         _data: &[u8],
@@ -2778,7 +2767,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn compute_pass_insert_debug_marker(
         &self,
-        _pass: &mut Self::ComputePassId,
         _pass_data: &mut Self::ComputePassData,
         _label: &str,
     ) {
@@ -2788,7 +2776,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn compute_pass_push_debug_group(
         &self,
-        _pass: &mut Self::ComputePassId,
         _pass_data: &mut Self::ComputePassData,
         _group_label: &str,
     ) {
@@ -2796,18 +2783,13 @@ impl crate::context::Context for ContextWebGpu {
         // self.0.push_debug_group(group_label);
     }
 
-    fn compute_pass_pop_debug_group(
-        &self,
-        _pass: &mut Self::ComputePassId,
-        _pass_data: &mut Self::ComputePassData,
-    ) {
+    fn compute_pass_pop_debug_group(&self, _pass_data: &mut Self::ComputePassData) {
         // Not available in gecko yet
         // self.0.pop_debug_group();
     }
 
     fn compute_pass_write_timestamp(
         &self,
-        _pass: &mut Self::ComputePassId,
         _pass_data: &mut Self::ComputePassData,
         _query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -2818,7 +2800,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn compute_pass_begin_pipeline_statistics_query(
         &self,
-        _pass: &mut Self::ComputePassId,
         _pass_data: &mut Self::ComputePassData,
         _query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -2827,17 +2808,12 @@ impl crate::context::Context for ContextWebGpu {
         // Not available in gecko yet
     }
 
-    fn compute_pass_end_pipeline_statistics_query(
-        &self,
-        _pass: &mut Self::ComputePassId,
-        _pass_data: &mut Self::ComputePassData,
-    ) {
+    fn compute_pass_end_pipeline_statistics_query(&self, _pass_data: &mut Self::ComputePassData) {
         // Not available in gecko yet
     }
 
     fn compute_pass_dispatch_workgroups(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         x: u32,
         y: u32,
@@ -2850,7 +2826,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn compute_pass_dispatch_workgroups_indirect(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         _indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -2864,7 +2839,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_set_pipeline(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         _pipeline: &Self::RenderPipelineId,
         pipeline_data: &Self::RenderPipelineData,
@@ -2874,7 +2848,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_set_bind_group(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         index: u32,
         _bind_group: &Self::BindGroupId,
@@ -2900,7 +2873,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_set_index_buffer(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         _buffer: &Self::BufferId,
         buffer_data: &Self::BufferData,
@@ -2929,7 +2901,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_set_vertex_buffer(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         slot: u32,
         _buffer: &Self::BufferId,
@@ -2958,7 +2929,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_set_push_constants(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _stages: wgt::ShaderStages,
         _offset: u32,
@@ -2969,7 +2939,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_draw(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         vertices: Range<u32>,
         instances: Range<u32>,
@@ -2986,7 +2955,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_draw_indexed(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indices: Range<u32>,
         base_vertex: i32,
@@ -3005,7 +2973,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_draw_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -3018,7 +2985,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_draw_indexed_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -3031,7 +2997,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_multi_draw_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3043,7 +3008,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_multi_draw_indexed_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3055,7 +3019,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_multi_draw_indirect_count(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3072,7 +3035,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_bundle_encoder_multi_draw_indexed_indirect_count(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3087,7 +3049,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_pipeline(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         _pipeline: &Self::RenderPipelineId,
         pipeline_data: &Self::RenderPipelineData,
@@ -3097,7 +3058,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_bind_group(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         index: u32,
         _bind_group: &Self::BindGroupId,
@@ -3121,7 +3081,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_index_buffer(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         _buffer: &Self::BufferId,
         buffer_data: &Self::BufferData,
@@ -3150,7 +3109,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_vertex_buffer(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         slot: u32,
         _buffer: &Self::BufferId,
@@ -3179,7 +3137,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_push_constants(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _stages: wgt::ShaderStages,
         _offset: u32,
@@ -3190,7 +3147,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_draw(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         vertices: Range<u32>,
         instances: Range<u32>,
@@ -3207,7 +3163,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_draw_indexed(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indices: Range<u32>,
         base_vertex: i32,
@@ -3226,7 +3181,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_draw_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         _indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -3239,7 +3193,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_draw_indexed_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         _indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -3252,7 +3205,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_multi_draw_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3264,7 +3216,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_multi_draw_indexed_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3276,7 +3227,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_multi_draw_indirect_count(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3293,7 +3243,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_multi_draw_indexed_indirect_count(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -3308,7 +3257,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_blend_constant(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         color: wgt::Color,
     ) {
@@ -3319,7 +3267,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_scissor_rect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         x: u32,
         y: u32,
@@ -3331,7 +3278,6 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_viewport(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         x: f32,
         y: f32,
@@ -3347,26 +3293,19 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_set_stencil_reference(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         reference: u32,
     ) {
         pass_data.0.set_stencil_reference(reference);
     }
 
-    fn render_pass_insert_debug_marker(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        _pass_data: &mut Self::RenderPassData,
-        _label: &str,
-    ) {
+    fn render_pass_insert_debug_marker(&self, _pass_data: &mut Self::RenderPassData, _label: &str) {
         // Not available in gecko yet
         // self.0.insert_debug_marker(label);
     }
 
     fn render_pass_push_debug_group(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _group_label: &str,
     ) {
@@ -3374,18 +3313,13 @@ impl crate::context::Context for ContextWebGpu {
         // self.0.push_debug_group(group_label);
     }
 
-    fn render_pass_pop_debug_group(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        _pass_data: &mut Self::RenderPassData,
-    ) {
+    fn render_pass_pop_debug_group(&self, _pass_data: &mut Self::RenderPassData) {
         // Not available in gecko yet
         // self.0.pop_debug_group();
     }
 
     fn render_pass_write_timestamp(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -3396,24 +3330,18 @@ impl crate::context::Context for ContextWebGpu {
 
     fn render_pass_begin_occlusion_query(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _query_index: u32,
     ) {
         // Not available in gecko yet
     }
 
-    fn render_pass_end_occlusion_query(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        _pass_data: &mut Self::RenderPassData,
-    ) {
+    fn render_pass_end_occlusion_query(&self, _pass_data: &mut Self::RenderPassData) {
         // Not available in gecko yet
     }
 
     fn render_pass_begin_pipeline_statistics_query(
         &self,
-        _pass: &mut Self::RenderPassId,
         _pass_data: &mut Self::RenderPassData,
         _query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -3422,17 +3350,12 @@ impl crate::context::Context for ContextWebGpu {
         // Not available in gecko yet
     }
 
-    fn render_pass_end_pipeline_statistics_query(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        _pass_data: &mut Self::RenderPassData,
-    ) {
+    fn render_pass_end_pipeline_statistics_query(&self, _pass_data: &mut Self::RenderPassData) {
         // Not available in gecko yet
     }
 
     fn render_pass_execute_bundles(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         render_bundles: &mut dyn Iterator<Item = (Self::RenderBundleId, &Self::RenderBundleData)>,
     ) {

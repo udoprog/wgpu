@@ -1,12 +1,11 @@
 use crate::{
-    context::{ObjectId, Unused},
-    AdapterInfo, BindGroupDescriptor, BindGroupLayoutDescriptor, BindingResource, BufferBinding,
-    BufferDescriptor, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipelineDescriptor,
-    DownlevelCapabilities, Features, Label, Limits, LoadOp, MapMode, Operations,
-    PipelineLayoutDescriptor, RenderBundleEncoderDescriptor, RenderPipelineDescriptor,
-    SamplerDescriptor, ShaderModuleDescriptor, ShaderModuleDescriptorSpirV, ShaderSource, StoreOp,
-    SurfaceStatus, SurfaceTargetUnsafe, TextureDescriptor, TextureViewDescriptor,
-    UncapturedErrorHandler,
+    context::ObjectId, AdapterInfo, BindGroupDescriptor, BindGroupLayoutDescriptor,
+    BindingResource, BufferBinding, BufferDescriptor, CommandEncoderDescriptor,
+    ComputePassDescriptor, ComputePipelineDescriptor, DownlevelCapabilities, Features, Label,
+    Limits, LoadOp, MapMode, Operations, PipelineLayoutDescriptor, RenderBundleEncoderDescriptor,
+    RenderPipelineDescriptor, SamplerDescriptor, ShaderModuleDescriptor,
+    ShaderModuleDescriptorSpirV, ShaderSource, StoreOp, SurfaceStatus, SurfaceTargetUnsafe,
+    TextureDescriptor, TextureViewDescriptor, UncapturedErrorHandler,
 };
 
 use arrayvec::ArrayVec;
@@ -475,13 +474,10 @@ impl crate::Context for ContextWgpuCore {
     type ComputePipelineData = ();
     type CommandEncoderId = wgc::id::CommandEncoderId;
     type CommandEncoderData = CommandEncoder;
-    type ComputePassId = Unused;
     type ComputePassData = wgc::command::ComputePass;
-    type RenderPassId = Unused;
     type RenderPassData = wgc::command::RenderPass;
     type CommandBufferId = wgc::id::CommandBufferId;
     type CommandBufferData = ();
-    type RenderBundleEncoderId = Unused;
     type RenderBundleEncoderData = wgc::command::RenderBundleEncoder;
     type RenderBundleId = wgc::id::RenderBundleId;
     type RenderBundleData = ();
@@ -489,7 +485,6 @@ impl crate::Context for ContextWgpuCore {
     type SurfaceId = wgc::id::SurfaceId;
     type SurfaceData = Surface;
     type SurfaceOutputDetail = SurfaceOutputDetail;
-    type SubmissionIndex = Unused;
     type SubmissionIndexData = wgc::device::queue::WrappedSubmissionIndex;
 
     type RequestAdapterFuture = Ready<Option<(Self::AdapterId, Self::AdapterData)>>;
@@ -1355,7 +1350,7 @@ impl crate::Context for ContextWgpuCore {
         device: &Self::DeviceId,
         _device_data: &Self::DeviceData,
         desc: &RenderBundleEncoderDescriptor<'_>,
-    ) -> (Self::RenderBundleEncoderId, Self::RenderBundleEncoderData) {
+    ) -> Self::RenderBundleEncoderData {
         let descriptor = wgc::command::RenderBundleEncoderDescriptor {
             label: desc.label.map(Borrowed),
             color_formats: Borrowed(desc.color_formats),
@@ -1364,7 +1359,7 @@ impl crate::Context for ContextWgpuCore {
             multiview: desc.multiview,
         };
         match wgc::command::RenderBundleEncoder::new(&descriptor, *device, None) {
-            Ok(encoder) => (Unused, encoder),
+            Ok(encoder) => encoder,
             Err(e) => panic!("Error in Device::create_render_bundle_encoder: {e}"),
         }
     }
@@ -1411,7 +1406,7 @@ impl crate::Context for ContextWgpuCore {
         _device_data: &Self::DeviceData,
         maintain: crate::Maintain,
     ) -> wgt::MaintainResult {
-        let maintain_inner = maintain.map_index(|i| *i.1.as_ref().downcast_ref().unwrap());
+        let maintain_inner = maintain.map_index(|i| *i.0.as_ref().downcast_ref().unwrap());
         match wgc::gfx_select!(device => self.0.device_poll(
             *device,
             maintain_inner
@@ -1783,7 +1778,7 @@ impl crate::Context for ContextWgpuCore {
         encoder: &Self::CommandEncoderId,
         _encoder_data: &Self::CommandEncoderData,
         desc: &ComputePassDescriptor<'_>,
-    ) -> (Self::ComputePassId, Self::ComputePassData) {
+    ) -> Self::ComputePassData {
         let timestamp_writes =
             desc.timestamp_writes
                 .as_ref()
@@ -1792,15 +1787,13 @@ impl crate::Context for ContextWgpuCore {
                     beginning_of_pass_write_index: tw.beginning_of_pass_write_index,
                     end_of_pass_write_index: tw.end_of_pass_write_index,
                 });
-        (
-            Unused,
-            wgc::command::ComputePass::new(
-                *encoder,
-                &wgc::command::ComputePassDescriptor {
-                    label: desc.label.map(Borrowed),
-                    timestamp_writes: timestamp_writes.as_ref(),
-                },
-            ),
+
+        wgc::command::ComputePass::new(
+            *encoder,
+            &wgc::command::ComputePassDescriptor {
+                label: desc.label.map(Borrowed),
+                timestamp_writes: timestamp_writes.as_ref(),
+            },
         )
     }
 
@@ -1808,7 +1801,6 @@ impl crate::Context for ContextWgpuCore {
         &self,
         encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
     ) {
         if let Err(cause) = wgc::gfx_select!(
@@ -1830,7 +1822,7 @@ impl crate::Context for ContextWgpuCore {
         encoder: &Self::CommandEncoderId,
         _encoder_data: &Self::CommandEncoderData,
         desc: &crate::RenderPassDescriptor<'_, '_>,
-    ) -> (Self::RenderPassId, Self::RenderPassData) {
+    ) -> Self::RenderPassData {
         if desc.color_attachments.len() > wgc::MAX_COLOR_ATTACHMENTS {
             self.handle_error_fatal(
                 wgc::command::ColorAttachmentError::TooMany {
@@ -1870,20 +1862,17 @@ impl crate::Context for ContextWgpuCore {
                     end_of_pass_write_index: tw.end_of_pass_write_index,
                 });
 
-        (
-            Unused,
-            wgc::command::RenderPass::new(
-                *encoder,
-                &wgc::command::RenderPassDescriptor {
-                    label: desc.label.map(Borrowed),
-                    color_attachments: Borrowed(&colors),
-                    depth_stencil_attachment: depth_stencil.as_ref(),
-                    timestamp_writes: timestamp_writes.as_ref(),
-                    occlusion_query_set: desc
-                        .occlusion_query_set
-                        .map(|query_set| query_set.id.into()),
-                },
-            ),
+        wgc::command::RenderPass::new(
+            *encoder,
+            &wgc::command::RenderPassDescriptor {
+                label: desc.label.map(Borrowed),
+                color_attachments: Borrowed(&colors),
+                depth_stencil_attachment: depth_stencil.as_ref(),
+                timestamp_writes: timestamp_writes.as_ref(),
+                occlusion_query_set: desc
+                    .occlusion_query_set
+                    .map(|query_set| query_set.id.into()),
+            },
         )
     }
 
@@ -1891,7 +1880,6 @@ impl crate::Context for ContextWgpuCore {
         &self,
         encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
     ) {
         if let Err(cause) =
@@ -2065,7 +2053,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_finish(
         &self,
-        _encoder: Self::RenderBundleEncoderId,
         encoder_data: Self::RenderBundleEncoderData,
         desc: &crate::RenderBundleDescriptor<'_>,
     ) -> (Self::RenderBundleId, Self::RenderBundleData) {
@@ -2217,18 +2204,15 @@ impl crate::Context for ContextWgpuCore {
         queue: &Self::QueueId,
         _queue_data: &Self::QueueData,
         command_buffers: I,
-    ) -> (Self::SubmissionIndex, Self::SubmissionIndexData) {
+    ) -> Self::SubmissionIndexData {
         let temp_command_buffers = command_buffers
             .map(|(i, _)| i)
             .collect::<SmallVec<[_; 4]>>();
 
-        let index = match wgc::gfx_select!(*queue => self.0.queue_submit(*queue, &temp_command_buffers))
-        {
+        match wgc::gfx_select!(*queue => self.0.queue_submit(*queue, &temp_command_buffers)) {
             Ok(index) => index,
             Err(err) => self.handle_error_fatal(err, "Queue::submit"),
-        };
-
-        (Unused, index)
+        }
     }
 
     fn queue_get_timestamp_period(
@@ -2271,7 +2255,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn compute_pass_set_pipeline(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         pipeline: &Self::ComputePipelineId,
         _pipeline_data: &Self::ComputePipelineData,
@@ -2281,7 +2264,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn compute_pass_set_bind_group(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         index: u32,
         bind_group: &Self::BindGroupId,
@@ -2301,7 +2283,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn compute_pass_set_push_constants(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         offset: u32,
         data: &[u8],
@@ -2316,12 +2297,7 @@ impl crate::Context for ContextWgpuCore {
         }
     }
 
-    fn compute_pass_insert_debug_marker(
-        &self,
-        _pass: &mut Self::ComputePassId,
-        pass_data: &mut Self::ComputePassData,
-        label: &str,
-    ) {
+    fn compute_pass_insert_debug_marker(&self, pass_data: &mut Self::ComputePassData, label: &str) {
         unsafe {
             let label = std::ffi::CString::new(label).unwrap();
             wgpu_compute_pass_insert_debug_marker(pass_data, label.as_ptr(), 0);
@@ -2330,7 +2306,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn compute_pass_push_debug_group(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         group_label: &str,
     ) {
@@ -2340,17 +2315,12 @@ impl crate::Context for ContextWgpuCore {
         }
     }
 
-    fn compute_pass_pop_debug_group(
-        &self,
-        _pass: &mut Self::ComputePassId,
-        pass_data: &mut Self::ComputePassData,
-    ) {
+    fn compute_pass_pop_debug_group(&self, pass_data: &mut Self::ComputePassData) {
         wgpu_compute_pass_pop_debug_group(pass_data);
     }
 
     fn compute_pass_write_timestamp(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -2361,7 +2331,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn compute_pass_begin_pipeline_statistics_query(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -2370,17 +2339,12 @@ impl crate::Context for ContextWgpuCore {
         wgpu_compute_pass_begin_pipeline_statistics_query(pass_data, *query_set, query_index)
     }
 
-    fn compute_pass_end_pipeline_statistics_query(
-        &self,
-        _pass: &mut Self::ComputePassId,
-        pass_data: &mut Self::ComputePassData,
-    ) {
+    fn compute_pass_end_pipeline_statistics_query(&self, pass_data: &mut Self::ComputePassData) {
         wgpu_compute_pass_end_pipeline_statistics_query(pass_data)
     }
 
     fn compute_pass_dispatch_workgroups(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         x: u32,
         y: u32,
@@ -2391,7 +2355,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn compute_pass_dispatch_workgroups_indirect(
         &self,
-        _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2402,7 +2365,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_set_pipeline(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         pipeline: &Self::RenderPipelineId,
         _pipeline_data: &Self::RenderPipelineData,
@@ -2412,7 +2374,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_set_bind_group(
         &self,
-        __encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         index: u32,
         bind_group: &Self::BindGroupId,
@@ -2432,7 +2393,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_set_index_buffer(
         &self,
-        __encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         buffer: &Self::BufferId,
         __buffer_data: &Self::BufferData,
@@ -2445,7 +2405,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_set_vertex_buffer(
         &self,
-        __encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         slot: u32,
         buffer: &Self::BufferId,
@@ -2458,7 +2417,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_set_push_constants(
         &self,
-        __encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         stages: wgt::ShaderStages,
         offset: u32,
@@ -2477,7 +2435,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_draw(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         vertices: Range<u32>,
         instances: Range<u32>,
@@ -2493,7 +2450,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_draw_indexed(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indices: Range<u32>,
         base_vertex: i32,
@@ -2511,7 +2467,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_draw_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2522,7 +2477,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_draw_indexed_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2533,7 +2487,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_multi_draw_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2545,7 +2498,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_multi_draw_indexed_indirect(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2557,7 +2509,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_multi_draw_indirect_count(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2572,7 +2523,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_bundle_encoder_multi_draw_indexed_indirect_count(
         &self,
-        _encoder: &mut Self::RenderBundleEncoderId,
         _encoder_data: &mut Self::RenderBundleEncoderData,
         _indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2587,7 +2537,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_pipeline(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         pipeline: &Self::RenderPipelineId,
         _pipeline_data: &Self::RenderPipelineData,
@@ -2597,7 +2546,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_bind_group(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         index: u32,
         bind_group: &Self::BindGroupId,
@@ -2617,7 +2565,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_index_buffer(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         buffer: &Self::BufferId,
         _buffer_data: &Self::BufferData,
@@ -2630,7 +2577,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_vertex_buffer(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         slot: u32,
         buffer: &Self::BufferId,
@@ -2643,7 +2589,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_push_constants(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         stages: wgt::ShaderStages,
         offset: u32,
@@ -2662,7 +2607,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_draw(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         vertices: Range<u32>,
         instances: Range<u32>,
@@ -2678,7 +2622,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_draw_indexed(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indices: Range<u32>,
         base_vertex: i32,
@@ -2696,7 +2639,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_draw_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2707,7 +2649,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_draw_indexed_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2718,7 +2659,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_multi_draw_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2730,7 +2670,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_multi_draw_indexed_indirect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2747,7 +2686,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_multi_draw_indirect_count(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2769,7 +2707,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_multi_draw_indexed_indirect_count(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         _indirect_buffer_data: &Self::BufferData,
@@ -2791,7 +2728,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_blend_constant(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         color: wgt::Color,
     ) {
@@ -2800,7 +2736,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_scissor_rect(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         x: u32,
         y: u32,
@@ -2812,7 +2747,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_viewport(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         x: f32,
         y: f32,
@@ -2826,19 +2760,13 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_set_stencil_reference(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         reference: u32,
     ) {
         wgpu_render_pass_set_stencil_reference(pass_data, reference)
     }
 
-    fn render_pass_insert_debug_marker(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-        label: &str,
-    ) {
+    fn render_pass_insert_debug_marker(&self, pass_data: &mut Self::RenderPassData, label: &str) {
         unsafe {
             let label = std::ffi::CString::new(label).unwrap();
             wgpu_render_pass_insert_debug_marker(pass_data, label.as_ptr(), 0);
@@ -2847,7 +2775,6 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_push_debug_group(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         group_label: &str,
     ) {
@@ -2857,17 +2784,12 @@ impl crate::Context for ContextWgpuCore {
         }
     }
 
-    fn render_pass_pop_debug_group(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-    ) {
+    fn render_pass_pop_debug_group(&self, pass_data: &mut Self::RenderPassData) {
         wgpu_render_pass_pop_debug_group(pass_data);
     }
 
     fn render_pass_write_timestamp(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -2878,24 +2800,18 @@ impl crate::Context for ContextWgpuCore {
 
     fn render_pass_begin_occlusion_query(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         query_index: u32,
     ) {
         wgpu_render_pass_begin_occlusion_query(pass_data, query_index)
     }
 
-    fn render_pass_end_occlusion_query(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-    ) {
+    fn render_pass_end_occlusion_query(&self, pass_data: &mut Self::RenderPassData) {
         wgpu_render_pass_end_occlusion_query(pass_data)
     }
 
     fn render_pass_begin_pipeline_statistics_query(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         query_set: &Self::QuerySetId,
         _query_set_data: &Self::QuerySetData,
@@ -2904,17 +2820,12 @@ impl crate::Context for ContextWgpuCore {
         wgpu_render_pass_begin_pipeline_statistics_query(pass_data, *query_set, query_index)
     }
 
-    fn render_pass_end_pipeline_statistics_query(
-        &self,
-        _pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-    ) {
+    fn render_pass_end_pipeline_statistics_query(&self, pass_data: &mut Self::RenderPassData) {
         wgpu_render_pass_end_pipeline_statistics_query(pass_data)
     }
 
     fn render_pass_execute_bundles(
         &self,
-        _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         render_bundles: &mut dyn Iterator<Item = (Self::RenderBundleId, &Self::RenderBundleData)>,
     ) {

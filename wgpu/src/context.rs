@@ -1,8 +1,8 @@
 use std::{any::Any, fmt::Debug, future::Future, num::NonZeroU64, ops::Range, pin::Pin, sync::Arc};
 
 use wgt::{
-    strict_assert, strict_assert_eq, AdapterInfo, BufferAddress, BufferSize, Color,
-    DeviceLostReason, DownlevelCapabilities, DynamicOffset, Extent3d, Features, ImageDataLayout,
+    strict_assert, AdapterInfo, BufferAddress, BufferSize, Color, DeviceLostReason,
+    DownlevelCapabilities, DynamicOffset, Extent3d, Features, ImageDataLayout,
     ImageSubresourceRange, IndexFormat, Limits, ShaderStages, SurfaceStatus, TextureFormat,
     TextureFormatFeatures, WasmNotSend, WasmNotSendSync,
 };
@@ -61,13 +61,10 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     type ComputePipelineData: ContextData;
     type CommandEncoderId: ContextId + WasmNotSendSync;
     type CommandEncoderData: ContextData;
-    type ComputePassId: ContextId;
     type ComputePassData: ContextData;
-    type RenderPassId: ContextId;
     type RenderPassData: ContextData;
     type CommandBufferId: ContextId + WasmNotSendSync;
     type CommandBufferData: ContextData;
-    type RenderBundleEncoderId: ContextId;
     type RenderBundleEncoderData: ContextData;
     type RenderBundleId: ContextId + WasmNotSendSync;
     type RenderBundleData: ContextData;
@@ -75,7 +72,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     type SurfaceData: ContextData;
 
     type SurfaceOutputDetail: WasmNotSendSync + 'static;
-    type SubmissionIndex: ContextId + Clone + Copy + WasmNotSendSync;
     type SubmissionIndexData: ContextData + Copy;
 
     type RequestAdapterFuture: Future<Output = Option<(Self::AdapterId, Self::AdapterData)>>
@@ -266,7 +262,7 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
         device: &Self::DeviceId,
         device_data: &Self::DeviceData,
         desc: &RenderBundleEncoderDescriptor<'_>,
-    ) -> (Self::RenderBundleEncoderId, Self::RenderBundleEncoderData);
+    ) -> Self::RenderBundleEncoderData;
     fn device_drop(&self, device: &Self::DeviceId, device_data: &Self::DeviceData);
     fn device_set_device_lost_callback(
         &self,
@@ -443,12 +439,11 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
         encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
         desc: &ComputePassDescriptor<'_>,
-    ) -> (Self::ComputePassId, Self::ComputePassData);
+    ) -> Self::ComputePassData;
     fn command_encoder_end_compute_pass(
         &self,
         encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
     );
     fn command_encoder_begin_render_pass(
@@ -456,12 +451,11 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
         encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
         desc: &RenderPassDescriptor<'_, '_>,
-    ) -> (Self::RenderPassId, Self::RenderPassData);
+    ) -> Self::RenderPassData;
     fn command_encoder_end_render_pass(
         &self,
         encoder: &Self::CommandEncoderId,
         encoder_data: &Self::CommandEncoderData,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
     );
     fn command_encoder_finish(
@@ -528,7 +522,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
 
     fn render_bundle_encoder_finish(
         &self,
-        encoder: Self::RenderBundleEncoderId,
         encoder_data: Self::RenderBundleEncoderData,
         desc: &RenderBundleDescriptor<'_>,
     ) -> (Self::RenderBundleId, Self::RenderBundleData);
@@ -588,7 +581,7 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
         queue: &Self::QueueId,
         queue_data: &Self::QueueData,
         command_buffers: I,
-    ) -> (Self::SubmissionIndex, Self::SubmissionIndexData);
+    ) -> Self::SubmissionIndexData;
     fn queue_get_timestamp_period(
         &self,
         queue: &Self::QueueId,
@@ -606,14 +599,12 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
 
     fn compute_pass_set_pipeline(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         pipeline: &Self::ComputePipelineId,
         pipeline_data: &Self::ComputePipelineData,
     );
     fn compute_pass_set_bind_group(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         index: u32,
         bind_group: &Self::BindGroupId,
@@ -622,31 +613,19 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn compute_pass_set_push_constants(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         offset: u32,
         data: &[u8],
     );
-    fn compute_pass_insert_debug_marker(
-        &self,
-        pass: &mut Self::ComputePassId,
-        pass_data: &mut Self::ComputePassData,
-        label: &str,
-    );
+    fn compute_pass_insert_debug_marker(&self, pass_data: &mut Self::ComputePassData, label: &str);
     fn compute_pass_push_debug_group(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         group_label: &str,
     );
-    fn compute_pass_pop_debug_group(
-        &self,
-        pass: &mut Self::ComputePassId,
-        pass_data: &mut Self::ComputePassData,
-    );
+    fn compute_pass_pop_debug_group(&self, pass_data: &mut Self::ComputePassData);
     fn compute_pass_write_timestamp(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         query_set: &Self::QuerySetId,
         query_set_data: &Self::QuerySetData,
@@ -654,20 +633,14 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn compute_pass_begin_pipeline_statistics_query(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         query_set: &Self::QuerySetId,
         query_set_data: &Self::QuerySetData,
         query_index: u32,
     );
-    fn compute_pass_end_pipeline_statistics_query(
-        &self,
-        pass: &mut Self::ComputePassId,
-        pass_data: &mut Self::ComputePassData,
-    );
+    fn compute_pass_end_pipeline_statistics_query(&self, pass_data: &mut Self::ComputePassData);
     fn compute_pass_dispatch_workgroups(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         x: u32,
         y: u32,
@@ -675,7 +648,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn compute_pass_dispatch_workgroups_indirect(
         &self,
-        pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -684,14 +656,12 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
 
     fn render_bundle_encoder_set_pipeline(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         pipeline: &Self::RenderPipelineId,
         pipeline_data: &Self::RenderPipelineData,
     );
     fn render_bundle_encoder_set_bind_group(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         index: u32,
         bind_group: &Self::BindGroupId,
@@ -701,7 +671,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_set_index_buffer(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         buffer: &Self::BufferId,
         buffer_data: &Self::BufferData,
@@ -712,7 +681,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_set_vertex_buffer(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         slot: u32,
         buffer: &Self::BufferId,
@@ -722,7 +690,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_bundle_encoder_set_push_constants(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         stages: ShaderStages,
         offset: u32,
@@ -730,14 +697,12 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_bundle_encoder_draw(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         vertices: Range<u32>,
         instances: Range<u32>,
     );
     fn render_bundle_encoder_draw_indexed(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indices: Range<u32>,
         base_vertex: i32,
@@ -745,7 +710,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_bundle_encoder_draw_indirect(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -753,7 +717,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_bundle_encoder_draw_indexed_indirect(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -761,7 +724,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_bundle_encoder_multi_draw_indirect(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -770,7 +732,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_bundle_encoder_multi_draw_indexed_indirect(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -780,7 +741,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_multi_draw_indirect_count(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -793,7 +753,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_multi_draw_indexed_indirect_count(
         &self,
-        encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -806,14 +765,12 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
 
     fn render_pass_set_pipeline(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         pipeline: &Self::RenderPipelineId,
         pipeline_data: &Self::RenderPipelineData,
     );
     fn render_pass_set_bind_group(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         index: u32,
         bind_group: &Self::BindGroupId,
@@ -823,7 +780,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_set_index_buffer(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         buffer: &Self::BufferId,
         buffer_data: &Self::BufferData,
@@ -834,7 +790,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_set_vertex_buffer(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         slot: u32,
         buffer: &Self::BufferId,
@@ -844,7 +799,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_set_push_constants(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         stages: ShaderStages,
         offset: u32,
@@ -852,14 +806,12 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_draw(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         vertices: Range<u32>,
         instances: Range<u32>,
     );
     fn render_pass_draw_indexed(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indices: Range<u32>,
         base_vertex: i32,
@@ -867,7 +819,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_draw_indirect(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -875,7 +826,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_draw_indexed_indirect(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -883,7 +833,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_multi_draw_indirect(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -892,7 +841,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_multi_draw_indexed_indirect(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -902,7 +850,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_multi_draw_indirect_count(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -915,7 +862,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_multi_draw_indexed_indirect_count(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         indirect_buffer: &Self::BufferId,
         indirect_buffer_data: &Self::BufferData,
@@ -925,15 +871,9 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
         count_buffer_offset: BufferAddress,
         max_count: u32,
     );
-    fn render_pass_set_blend_constant(
-        &self,
-        pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-        color: Color,
-    );
+    fn render_pass_set_blend_constant(&self, pass_data: &mut Self::RenderPassData, color: Color);
     fn render_pass_set_scissor_rect(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         x: u32,
         y: u32,
@@ -943,7 +883,6 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_set_viewport(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         x: f32,
         y: f32,
@@ -954,30 +893,14 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_set_stencil_reference(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         reference: u32,
     );
-    fn render_pass_insert_debug_marker(
-        &self,
-        pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-        label: &str,
-    );
-    fn render_pass_push_debug_group(
-        &self,
-        pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-        group_label: &str,
-    );
-    fn render_pass_pop_debug_group(
-        &self,
-        pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-    );
+    fn render_pass_insert_debug_marker(&self, pass_data: &mut Self::RenderPassData, label: &str);
+    fn render_pass_push_debug_group(&self, pass_data: &mut Self::RenderPassData, group_label: &str);
+    fn render_pass_pop_debug_group(&self, pass_data: &mut Self::RenderPassData);
     fn render_pass_write_timestamp(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         query_set: &Self::QuerySetId,
         query_set_data: &Self::QuerySetData,
@@ -985,31 +908,20 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
     );
     fn render_pass_begin_occlusion_query(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         query_index: u32,
     );
-    fn render_pass_end_occlusion_query(
-        &self,
-        pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-    );
+    fn render_pass_end_occlusion_query(&self, pass_data: &mut Self::RenderPassData);
     fn render_pass_begin_pipeline_statistics_query(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         query_set: &Self::QuerySetId,
         query_set_data: &Self::QuerySetData,
         query_index: u32,
     );
-    fn render_pass_end_pipeline_statistics_query(
-        &self,
-        pass: &mut Self::RenderPassId,
-        pass_data: &mut Self::RenderPassData,
-    );
+    fn render_pass_end_pipeline_statistics_query(&self, pass_data: &mut Self::RenderPassData);
     fn render_pass_execute_bundles(
         &self,
-        pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         render_bundles: &mut dyn Iterator<Item = (Self::RenderBundleId, &Self::RenderBundleData)>,
     );
@@ -1025,11 +937,6 @@ pub struct ObjectId {
 }
 
 impl ObjectId {
-    pub(crate) const UNUSED: Self = ObjectId {
-        id: None,
-        global_id: None,
-    };
-
     #[allow(dead_code)]
     pub fn new(id: NonZeroU64, global_id: NonZeroU64) -> Self {
         Self {
@@ -1069,25 +976,6 @@ fn downcast_mut<T: Debug + WasmNotSendSync + 'static>(data: &mut crate::Data) ->
     strict_assert!(data.is::<T>());
     // Copied from std.
     unsafe { &mut *(data as *mut dyn Any as *mut T) }
-}
-
-/// Representation of an object id that is not used.
-///
-/// This may be used as the id type when only a the data associated type is used for a specific type of object.
-#[derive(Debug, Clone, Copy)]
-pub struct Unused;
-
-impl From<ObjectId> for Unused {
-    fn from(id: ObjectId) -> Self {
-        strict_assert_eq!(id, ObjectId::UNUSED);
-        Self
-    }
-}
-
-impl From<Unused> for ObjectId {
-    fn from(_: Unused) -> Self {
-        ObjectId::UNUSED
-    }
 }
 
 pub(crate) struct DeviceRequest {
@@ -1292,7 +1180,7 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
         device: &ObjectId,
         device_data: &crate::Data,
         desc: &RenderBundleEncoderDescriptor<'_>,
-    ) -> (ObjectId, Box<crate::Data>);
+    ) -> Box<crate::Data>;
     fn device_drop(&self, device: &ObjectId, device_data: &crate::Data);
     fn device_set_device_lost_callback(
         &self,
@@ -1427,12 +1315,11 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
         encoder: &ObjectId,
         encoder_data: &crate::Data,
         desc: &ComputePassDescriptor<'_>,
-    ) -> (ObjectId, Box<crate::Data>);
+    ) -> Box<crate::Data>;
     fn command_encoder_end_compute_pass(
         &self,
         encoder: &ObjectId,
         encoder_data: &crate::Data,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
     );
     fn command_encoder_begin_render_pass(
@@ -1440,12 +1327,11 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
         encoder: &ObjectId,
         encoder_data: &crate::Data,
         desc: &RenderPassDescriptor<'_, '_>,
-    ) -> (ObjectId, Box<crate::Data>);
+    ) -> Box<crate::Data>;
     fn command_encoder_end_render_pass(
         &self,
         encoder: &ObjectId,
         encoder_data: &crate::Data,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
     );
     fn command_encoder_finish(
@@ -1508,7 +1394,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
 
     fn render_bundle_encoder_finish(
         &self,
-        encoder: ObjectId,
         encoder_data: Box<crate::Data>,
         desc: &RenderBundleDescriptor<'_>,
     ) -> (ObjectId, Box<crate::Data>);
@@ -1568,7 +1453,7 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
         queue: &ObjectId,
         queue_data: &crate::Data,
         command_buffers: &mut dyn Iterator<Item = (ObjectId, Box<crate::Data>)>,
-    ) -> (ObjectId, Arc<crate::Data>);
+    ) -> Arc<crate::Data>;
     fn queue_get_timestamp_period(&self, queue: &ObjectId, queue_data: &crate::Data) -> f32;
     fn queue_on_submitted_work_done(
         &self,
@@ -1582,14 +1467,12 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
 
     fn compute_pass_set_pipeline(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         pipeline: &ObjectId,
         pipeline_data: &crate::Data,
     );
     fn compute_pass_set_bind_group(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         index: u32,
         bind_group: &ObjectId,
@@ -1598,27 +1481,15 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn compute_pass_set_push_constants(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         offset: u32,
         data: &[u8],
     );
-    fn compute_pass_insert_debug_marker(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        label: &str,
-    );
-    fn compute_pass_push_debug_group(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        group_label: &str,
-    );
-    fn compute_pass_pop_debug_group(&self, pass: &mut ObjectId, pass_data: &mut crate::Data);
+    fn compute_pass_insert_debug_marker(&self, pass_data: &mut crate::Data, label: &str);
+    fn compute_pass_push_debug_group(&self, pass_data: &mut crate::Data, group_label: &str);
+    fn compute_pass_pop_debug_group(&self, pass_data: &mut crate::Data);
     fn compute_pass_write_timestamp(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
@@ -1626,28 +1497,15 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn compute_pass_begin_pipeline_statistics_query(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
         query_index: u32,
     );
-    fn compute_pass_end_pipeline_statistics_query(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-    );
-    fn compute_pass_dispatch_workgroups(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        x: u32,
-        y: u32,
-        z: u32,
-    );
+    fn compute_pass_end_pipeline_statistics_query(&self, pass_data: &mut crate::Data);
+    fn compute_pass_dispatch_workgroups(&self, pass_data: &mut crate::Data, x: u32, y: u32, z: u32);
     fn compute_pass_dispatch_workgroups_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1656,14 +1514,12 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
 
     fn render_bundle_encoder_set_pipeline(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         pipeline: &ObjectId,
         pipeline_data: &crate::Data,
     );
     fn render_bundle_encoder_set_bind_group(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         index: u32,
         bind_group: &ObjectId,
@@ -1673,7 +1529,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_set_index_buffer(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         buffer: &ObjectId,
         buffer_data: &crate::Data,
@@ -1684,7 +1539,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_set_vertex_buffer(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         slot: u32,
         buffer: &ObjectId,
@@ -1694,7 +1548,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_bundle_encoder_set_push_constants(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         stages: ShaderStages,
         offset: u32,
@@ -1702,14 +1555,12 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_bundle_encoder_draw(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         vertices: Range<u32>,
         instances: Range<u32>,
     );
     fn render_bundle_encoder_draw_indexed(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indices: Range<u32>,
         base_vertex: i32,
@@ -1717,7 +1568,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_bundle_encoder_draw_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1725,7 +1575,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_bundle_encoder_draw_indexed_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1733,7 +1582,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_bundle_encoder_multi_draw_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1742,7 +1590,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_bundle_encoder_multi_draw_indexed_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1752,7 +1599,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_multi_draw_indirect_count(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1765,7 +1611,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_bundle_encoder_multi_draw_indexed_indirect_count(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1778,14 +1623,12 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
 
     fn render_pass_set_pipeline(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         pipeline: &ObjectId,
         pipeline_data: &crate::Data,
     );
     fn render_pass_set_bind_group(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         index: u32,
         bind_group: &ObjectId,
@@ -1795,7 +1638,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_set_index_buffer(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         buffer: &ObjectId,
         buffer_data: &crate::Data,
@@ -1806,7 +1648,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_set_vertex_buffer(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         slot: u32,
         buffer: &ObjectId,
@@ -1816,7 +1657,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_pass_set_push_constants(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         stages: ShaderStages,
         offset: u32,
@@ -1824,14 +1664,12 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_pass_draw(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         vertices: Range<u32>,
         instances: Range<u32>,
     );
     fn render_pass_draw_indexed(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indices: Range<u32>,
         base_vertex: i32,
@@ -1839,7 +1677,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_pass_draw_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1847,7 +1684,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_pass_draw_indexed_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1855,7 +1691,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_pass_multi_draw_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1864,7 +1699,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     );
     fn render_pass_multi_draw_indexed_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1874,7 +1708,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_multi_draw_indirect_count(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1887,7 +1720,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_multi_draw_indexed_indirect_count(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -1897,15 +1729,9 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
         count_buffer_offset: BufferAddress,
         max_count: u32,
     );
-    fn render_pass_set_blend_constant(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        color: Color,
-    );
+    fn render_pass_set_blend_constant(&self, pass_data: &mut crate::Data, color: Color);
     fn render_pass_set_scissor_rect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         x: u32,
         y: u32,
@@ -1915,7 +1741,6 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
     #[allow(clippy::too_many_arguments)]
     fn render_pass_set_viewport(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         x: f32,
         y: f32,
@@ -1924,56 +1749,29 @@ pub(crate) trait DynContext: Debug + WasmNotSendSync {
         min_depth: f32,
         max_depth: f32,
     );
-    fn render_pass_set_stencil_reference(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        reference: u32,
-    );
-    fn render_pass_insert_debug_marker(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        label: &str,
-    );
-    fn render_pass_push_debug_group(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        group_label: &str,
-    );
-    fn render_pass_pop_debug_group(&self, pass: &mut ObjectId, pass_data: &mut crate::Data);
+    fn render_pass_set_stencil_reference(&self, pass_data: &mut crate::Data, reference: u32);
+    fn render_pass_insert_debug_marker(&self, pass_data: &mut crate::Data, label: &str);
+    fn render_pass_push_debug_group(&self, pass_data: &mut crate::Data, group_label: &str);
+    fn render_pass_pop_debug_group(&self, pass_data: &mut crate::Data);
     fn render_pass_write_timestamp(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
         query_index: u32,
     );
-    fn render_pass_begin_occlusion_query(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        query_index: u32,
-    );
-    fn render_pass_end_occlusion_query(&self, pass: &mut ObjectId, pass_data: &mut crate::Data);
+    fn render_pass_begin_occlusion_query(&self, pass_data: &mut crate::Data, query_index: u32);
+    fn render_pass_end_occlusion_query(&self, pass_data: &mut crate::Data);
     fn render_pass_begin_pipeline_statistics_query(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
         query_index: u32,
     );
-    fn render_pass_end_pipeline_statistics_query(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-    );
+    fn render_pass_end_pipeline_statistics_query(&self, pass_data: &mut crate::Data);
     fn render_pass_execute_bundles(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         render_bundles: &mut dyn Iterator<Item = (&ObjectId, &crate::Data)>,
     );
@@ -2342,12 +2140,11 @@ where
         device: &ObjectId,
         device_data: &crate::Data,
         desc: &RenderBundleEncoderDescriptor<'_>,
-    ) -> (ObjectId, Box<crate::Data>) {
+    ) -> Box<crate::Data> {
         let device = <T::DeviceId>::from(*device);
         let device_data = downcast_ref(device_data);
-        let (render_bundle_encoder, data) =
-            Context::device_create_render_bundle_encoder(self, &device, device_data, desc);
-        (render_bundle_encoder.into(), Box::new(data) as _)
+        let data = Context::device_create_render_bundle_encoder(self, &device, device_data, desc);
+        Box::new(data)
     }
 
     fn device_drop(&self, device: &ObjectId, device_data: &crate::Data) {
@@ -2705,32 +2502,23 @@ where
         encoder: &ObjectId,
         encoder_data: &crate::Data,
         desc: &ComputePassDescriptor<'_>,
-    ) -> (ObjectId, Box<crate::Data>) {
+    ) -> Box<crate::Data> {
         let encoder = <T::CommandEncoderId>::from(*encoder);
         let encoder_data = downcast_ref(encoder_data);
-        let (compute_pass, data) =
-            Context::command_encoder_begin_compute_pass(self, &encoder, encoder_data, desc);
-        (compute_pass.into(), Box::new(data) as _)
+        let data = Context::command_encoder_begin_compute_pass(self, &encoder, encoder_data, desc);
+        Box::new(data)
     }
 
     fn command_encoder_end_compute_pass(
         &self,
         encoder: &ObjectId,
         encoder_data: &crate::Data,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
     ) {
         let encoder = <T::CommandEncoderId>::from(*encoder);
         let encoder_data = downcast_ref(encoder_data);
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut(pass_data);
-        Context::command_encoder_end_compute_pass(
-            self,
-            &encoder,
-            encoder_data,
-            &mut pass,
-            pass_data,
-        )
+        Context::command_encoder_end_compute_pass(self, &encoder, encoder_data, pass_data)
     }
 
     fn command_encoder_begin_render_pass(
@@ -2738,26 +2526,23 @@ where
         encoder: &ObjectId,
         encoder_data: &crate::Data,
         desc: &RenderPassDescriptor<'_, '_>,
-    ) -> (ObjectId, Box<crate::Data>) {
+    ) -> Box<crate::Data> {
         let encoder = <T::CommandEncoderId>::from(*encoder);
         let encoder_data = downcast_ref(encoder_data);
-        let (render_pass, data) =
-            Context::command_encoder_begin_render_pass(self, &encoder, encoder_data, desc);
-        (render_pass.into(), Box::new(data) as _)
+        let data = Context::command_encoder_begin_render_pass(self, &encoder, encoder_data, desc);
+        Box::new(data)
     }
 
     fn command_encoder_end_render_pass(
         &self,
         encoder: &ObjectId,
         encoder_data: &crate::Data,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
     ) {
         let encoder = <T::CommandEncoderId>::from(*encoder);
         let encoder_data = downcast_ref(encoder_data);
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut(pass_data);
-        Context::command_encoder_end_render_pass(self, &encoder, encoder_data, &mut pass, pass_data)
+        Context::command_encoder_end_render_pass(self, &encoder, encoder_data, pass_data)
     }
 
     fn command_encoder_finish(
@@ -2885,13 +2670,11 @@ where
 
     fn render_bundle_encoder_finish(
         &self,
-        encoder: ObjectId,
         encoder_data: Box<crate::Data>,
         desc: &RenderBundleDescriptor<'_>,
     ) -> (ObjectId, Box<crate::Data>) {
         let encoder_data = *encoder_data.downcast().unwrap();
-        let (render_bundle, data) =
-            Context::render_bundle_encoder_finish(self, encoder.into(), encoder_data, desc);
+        let (render_bundle, data) = Context::render_bundle_encoder_finish(self, encoder_data, desc);
         (render_bundle.into(), Box::new(data) as _)
     }
 
@@ -3003,16 +2786,15 @@ where
         queue: &ObjectId,
         queue_data: &crate::Data,
         command_buffers: &mut dyn Iterator<Item = (ObjectId, Box<crate::Data>)>,
-    ) -> (ObjectId, Arc<crate::Data>) {
+    ) -> Arc<crate::Data> {
         let queue = <T::QueueId>::from(*queue);
         let queue_data = downcast_ref(queue_data);
         let command_buffers = command_buffers.map(|(id, data)| {
             let command_buffer_data: <T as Context>::CommandBufferData = *data.downcast().unwrap();
             (<T::CommandBufferId>::from(id), command_buffer_data)
         });
-        let (submission_index, data) =
-            Context::queue_submit(self, &queue, queue_data, command_buffers);
-        (submission_index.into(), Arc::new(data) as _)
+        let data = Context::queue_submit(self, &queue, queue_data, command_buffers);
+        Arc::new(data)
     }
 
     fn queue_get_timestamp_period(&self, queue: &ObjectId, queue_data: &crate::Data) -> f32 {
@@ -3046,34 +2828,29 @@ where
 
     fn compute_pass_set_pipeline(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         pipeline: &ObjectId,
         pipeline_data: &crate::Data,
     ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
         let pipeline = <T::ComputePipelineId>::from(*pipeline);
         let pipeline_data = downcast_ref(pipeline_data);
-        Context::compute_pass_set_pipeline(self, &mut pass, pass_data, &pipeline, pipeline_data)
+        Context::compute_pass_set_pipeline(self, pass_data, &pipeline, pipeline_data)
     }
 
     fn compute_pass_set_bind_group(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         index: u32,
         bind_group: &ObjectId,
         bind_group_data: &crate::Data,
         offsets: &[DynamicOffset],
     ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
         let bind_group = <T::BindGroupId>::from(*bind_group);
         let bind_group_data = downcast_ref(bind_group_data);
         Context::compute_pass_set_bind_group(
             self,
-            &mut pass,
             pass_data,
             index,
             &bind_group,
@@ -3084,59 +2861,41 @@ where
 
     fn compute_pass_set_push_constants(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         offset: u32,
         data: &[u8],
     ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
-        Context::compute_pass_set_push_constants(self, &mut pass, pass_data, offset, data)
+        Context::compute_pass_set_push_constants(self, pass_data, offset, data)
     }
 
-    fn compute_pass_insert_debug_marker(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        label: &str,
-    ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
+    fn compute_pass_insert_debug_marker(&self, pass_data: &mut crate::Data, label: &str) {
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
-        Context::compute_pass_insert_debug_marker(self, &mut pass, pass_data, label)
+        Context::compute_pass_insert_debug_marker(self, pass_data, label)
     }
 
-    fn compute_pass_push_debug_group(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        group_label: &str,
-    ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
+    fn compute_pass_push_debug_group(&self, pass_data: &mut crate::Data, group_label: &str) {
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
-        Context::compute_pass_push_debug_group(self, &mut pass, pass_data, group_label)
+        Context::compute_pass_push_debug_group(self, pass_data, group_label)
     }
 
-    fn compute_pass_pop_debug_group(&self, pass: &mut ObjectId, pass_data: &mut crate::Data) {
-        let mut pass = <T::ComputePassId>::from(*pass);
+    fn compute_pass_pop_debug_group(&self, pass_data: &mut crate::Data) {
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
-        Context::compute_pass_pop_debug_group(self, &mut pass, pass_data)
+        Context::compute_pass_pop_debug_group(self, pass_data)
     }
 
     fn compute_pass_write_timestamp(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
         query_index: u32,
     ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
         let query_set = <T::QuerySetId>::from(*query_set);
         let query_set_data = downcast_ref(query_set_data);
         Context::compute_pass_write_timestamp(
             self,
-            &mut pass,
             pass_data,
             &query_set,
             query_set_data,
@@ -3146,19 +2905,16 @@ where
 
     fn compute_pass_begin_pipeline_statistics_query(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
         query_index: u32,
     ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
         let query_set = <T::QuerySetId>::from(*query_set);
         let query_set_data = downcast_ref(query_set_data);
         Context::compute_pass_begin_pipeline_statistics_query(
             self,
-            &mut pass,
             pass_data,
             &query_set,
             query_set_data,
@@ -3166,44 +2922,34 @@ where
         )
     }
 
-    fn compute_pass_end_pipeline_statistics_query(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-    ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
+    fn compute_pass_end_pipeline_statistics_query(&self, pass_data: &mut crate::Data) {
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
-        Context::compute_pass_end_pipeline_statistics_query(self, &mut pass, pass_data)
+        Context::compute_pass_end_pipeline_statistics_query(self, pass_data)
     }
 
     fn compute_pass_dispatch_workgroups(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         x: u32,
         y: u32,
         z: u32,
     ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
-        Context::compute_pass_dispatch_workgroups(self, &mut pass, pass_data, x, y, z)
+        Context::compute_pass_dispatch_workgroups(self, pass_data, x, y, z)
     }
 
     fn compute_pass_dispatch_workgroups_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
     ) {
-        let mut pass = <T::ComputePassId>::from(*pass);
         let pass_data = downcast_mut::<T::ComputePassData>(pass_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::compute_pass_dispatch_workgroups_indirect(
             self,
-            &mut pass,
             pass_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3213,40 +2959,29 @@ where
 
     fn render_bundle_encoder_set_pipeline(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         pipeline: &ObjectId,
         pipeline_data: &crate::Data,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let pipeline = <T::RenderPipelineId>::from(*pipeline);
         let pipeline_data = downcast_ref(pipeline_data);
-        Context::render_bundle_encoder_set_pipeline(
-            self,
-            &mut encoder,
-            encoder_data,
-            &pipeline,
-            pipeline_data,
-        )
+        Context::render_bundle_encoder_set_pipeline(self, encoder_data, &pipeline, pipeline_data)
     }
 
     fn render_bundle_encoder_set_bind_group(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         index: u32,
         bind_group: &ObjectId,
         bind_group_data: &crate::Data,
         offsets: &[DynamicOffset],
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let bind_group = <T::BindGroupId>::from(*bind_group);
         let bind_group_data = downcast_ref(bind_group_data);
         Context::render_bundle_encoder_set_bind_group(
             self,
-            &mut encoder,
             encoder_data,
             index,
             &bind_group,
@@ -3257,7 +2992,6 @@ where
 
     fn render_bundle_encoder_set_index_buffer(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         buffer: &ObjectId,
         buffer_data: &crate::Data,
@@ -3265,13 +2999,11 @@ where
         offset: BufferAddress,
         size: Option<BufferSize>,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let buffer = <T::BufferId>::from(*buffer);
         let buffer_data = downcast_ref(buffer_data);
         Context::render_bundle_encoder_set_index_buffer(
             self,
-            &mut encoder,
             encoder_data,
             &buffer,
             buffer_data,
@@ -3283,7 +3015,6 @@ where
 
     fn render_bundle_encoder_set_vertex_buffer(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         slot: u32,
         buffer: &ObjectId,
@@ -3291,13 +3022,11 @@ where
         offset: BufferAddress,
         size: Option<BufferSize>,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let buffer = <T::BufferId>::from(*buffer);
         let buffer_data = downcast_ref(buffer_data);
         Context::render_bundle_encoder_set_vertex_buffer(
             self,
-            &mut encoder,
             encoder_data,
             slot,
             &buffer,
@@ -3309,49 +3038,35 @@ where
 
     fn render_bundle_encoder_set_push_constants(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         stages: ShaderStages,
         offset: u32,
         data: &[u8],
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
-        Context::render_bundle_encoder_set_push_constants(
-            self,
-            &mut encoder,
-            encoder_data,
-            stages,
-            offset,
-            data,
-        )
+        Context::render_bundle_encoder_set_push_constants(self, encoder_data, stages, offset, data)
     }
 
     fn render_bundle_encoder_draw(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         vertices: Range<u32>,
         instances: Range<u32>,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
-        Context::render_bundle_encoder_draw(self, &mut encoder, encoder_data, vertices, instances)
+        Context::render_bundle_encoder_draw(self, encoder_data, vertices, instances)
     }
 
     fn render_bundle_encoder_draw_indexed(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indices: Range<u32>,
         base_vertex: i32,
         instances: Range<u32>,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         Context::render_bundle_encoder_draw_indexed(
             self,
-            &mut encoder,
             encoder_data,
             indices,
             base_vertex,
@@ -3361,19 +3076,16 @@ where
 
     fn render_bundle_encoder_draw_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_bundle_encoder_draw_indirect(
             self,
-            &mut encoder,
             encoder_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3383,19 +3095,16 @@ where
 
     fn render_bundle_encoder_draw_indexed_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_bundle_encoder_draw_indexed_indirect(
             self,
-            &mut encoder,
             encoder_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3405,20 +3114,17 @@ where
 
     fn render_bundle_encoder_multi_draw_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
         count: u32,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_bundle_encoder_multi_draw_indirect(
             self,
-            &mut encoder,
             encoder_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3429,20 +3135,17 @@ where
 
     fn render_bundle_encoder_multi_draw_indexed_indirect(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
         count: u32,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_bundle_encoder_multi_draw_indexed_indirect(
             self,
-            &mut encoder,
             encoder_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3453,7 +3156,6 @@ where
 
     fn render_bundle_encoder_multi_draw_indirect_count(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -3463,7 +3165,6 @@ where
         count_buffer_offset: BufferAddress,
         max_count: u32,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
@@ -3471,7 +3172,6 @@ where
         let count_buffer_data = downcast_ref(count_buffer_data);
         Context::render_bundle_encoder_multi_draw_indirect_count(
             self,
-            &mut encoder,
             encoder_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3485,7 +3185,6 @@ where
 
     fn render_bundle_encoder_multi_draw_indexed_indirect_count(
         &self,
-        encoder: &mut ObjectId,
         encoder_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -3495,7 +3194,6 @@ where
         count_buffer_offset: BufferAddress,
         max_count: u32,
     ) {
-        let mut encoder = <T::RenderBundleEncoderId>::from(*encoder);
         let encoder_data = downcast_mut::<T::RenderBundleEncoderData>(encoder_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
@@ -3503,7 +3201,6 @@ where
         let count_buffer_data = downcast_ref(count_buffer_data);
         Context::render_bundle_encoder_multi_draw_indexed_indirect_count(
             self,
-            &mut encoder,
             encoder_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3517,34 +3214,29 @@ where
 
     fn render_pass_set_pipeline(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         pipeline: &ObjectId,
         pipeline_data: &crate::Data,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let pipeline = <T::RenderPipelineId>::from(*pipeline);
         let pipeline_data = downcast_ref(pipeline_data);
-        Context::render_pass_set_pipeline(self, &mut pass, pass_data, &pipeline, pipeline_data)
+        Context::render_pass_set_pipeline(self, pass_data, &pipeline, pipeline_data)
     }
 
     fn render_pass_set_bind_group(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         index: u32,
         bind_group: &ObjectId,
         bind_group_data: &crate::Data,
         offsets: &[DynamicOffset],
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let bind_group = <T::BindGroupId>::from(*bind_group);
         let bind_group_data = downcast_ref(bind_group_data);
         Context::render_pass_set_bind_group(
             self,
-            &mut pass,
             pass_data,
             index,
             &bind_group,
@@ -3555,7 +3247,6 @@ where
 
     fn render_pass_set_index_buffer(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         buffer: &ObjectId,
         buffer_data: &crate::Data,
@@ -3563,13 +3254,11 @@ where
         offset: BufferAddress,
         size: Option<BufferSize>,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let buffer = <T::BufferId>::from(*buffer);
         let buffer_data = downcast_ref(buffer_data);
         Context::render_pass_set_index_buffer(
             self,
-            &mut pass,
             pass_data,
             &buffer,
             buffer_data,
@@ -3581,7 +3270,6 @@ where
 
     fn render_pass_set_vertex_buffer(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         slot: u32,
         buffer: &ObjectId,
@@ -3589,13 +3277,11 @@ where
         offset: BufferAddress,
         size: Option<BufferSize>,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let buffer = <T::BufferId>::from(*buffer);
         let buffer_data = downcast_ref(buffer_data);
         Context::render_pass_set_vertex_buffer(
             self,
-            &mut pass,
             pass_data,
             slot,
             &buffer,
@@ -3607,64 +3293,48 @@ where
 
     fn render_pass_set_push_constants(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         stages: ShaderStages,
         offset: u32,
         data: &[u8],
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_set_push_constants(self, &mut pass, pass_data, stages, offset, data)
+        Context::render_pass_set_push_constants(self, pass_data, stages, offset, data)
     }
 
     fn render_pass_draw(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         vertices: Range<u32>,
         instances: Range<u32>,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_draw(self, &mut pass, pass_data, vertices, instances)
+        Context::render_pass_draw(self, pass_data, vertices, instances)
     }
 
     fn render_pass_draw_indexed(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indices: Range<u32>,
         base_vertex: i32,
         instances: Range<u32>,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_draw_indexed(
-            self,
-            &mut pass,
-            pass_data,
-            indices,
-            base_vertex,
-            instances,
-        )
+        Context::render_pass_draw_indexed(self, pass_data, indices, base_vertex, instances)
     }
 
     fn render_pass_draw_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_pass_draw_indirect(
             self,
-            &mut pass,
             pass_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3674,19 +3344,16 @@ where
 
     fn render_pass_draw_indexed_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_pass_draw_indexed_indirect(
             self,
-            &mut pass,
             pass_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3696,20 +3363,17 @@ where
 
     fn render_pass_multi_draw_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
         count: u32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_pass_multi_draw_indirect(
             self,
-            &mut pass,
             pass_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3720,20 +3384,17 @@ where
 
     fn render_pass_multi_draw_indexed_indirect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
         indirect_offset: BufferAddress,
         count: u32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
         Context::render_pass_multi_draw_indexed_indirect(
             self,
-            &mut pass,
             pass_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3744,7 +3405,6 @@ where
 
     fn render_pass_multi_draw_indirect_count(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -3754,7 +3414,6 @@ where
         count_buffer_offset: BufferAddress,
         max_count: u32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
@@ -3762,7 +3421,6 @@ where
         let count_buffer_data = downcast_ref(count_buffer_data);
         Context::render_pass_multi_draw_indirect_count(
             self,
-            &mut pass,
             pass_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3776,7 +3434,6 @@ where
 
     fn render_pass_multi_draw_indexed_indirect_count(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         indirect_buffer: &ObjectId,
         indirect_buffer_data: &crate::Data,
@@ -3786,7 +3443,6 @@ where
         count_buffer_offset: BufferAddress,
         max_count: u32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let indirect_buffer = <T::BufferId>::from(*indirect_buffer);
         let indirect_buffer_data = downcast_ref(indirect_buffer_data);
@@ -3794,7 +3450,6 @@ where
         let count_buffer_data = downcast_ref(count_buffer_data);
         Context::render_pass_multi_draw_indexed_indirect_count(
             self,
-            &mut pass,
             pass_data,
             &indirect_buffer,
             indirect_buffer_data,
@@ -3806,34 +3461,25 @@ where
         )
     }
 
-    fn render_pass_set_blend_constant(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        color: Color,
-    ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_set_blend_constant(&self, pass_data: &mut crate::Data, color: Color) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_set_blend_constant(self, &mut pass, pass_data, color)
+        Context::render_pass_set_blend_constant(self, pass_data, color)
     }
 
     fn render_pass_set_scissor_rect(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         x: u32,
         y: u32,
         width: u32,
         height: u32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_set_scissor_rect(self, &mut pass, pass_data, x, y, width, height)
+        Context::render_pass_set_scissor_rect(self, pass_data, x, y, width, height)
     }
 
     fn render_pass_set_viewport(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         x: f32,
         y: f32,
@@ -3842,67 +3488,44 @@ where
         min_depth: f32,
         max_depth: f32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         Context::render_pass_set_viewport(
-            self, &mut pass, pass_data, x, y, width, height, min_depth, max_depth,
+            self, pass_data, x, y, width, height, min_depth, max_depth,
         )
     }
 
-    fn render_pass_set_stencil_reference(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        reference: u32,
-    ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_set_stencil_reference(&self, pass_data: &mut crate::Data, reference: u32) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_set_stencil_reference(self, &mut pass, pass_data, reference)
+        Context::render_pass_set_stencil_reference(self, pass_data, reference)
     }
 
-    fn render_pass_insert_debug_marker(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        label: &str,
-    ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_insert_debug_marker(&self, pass_data: &mut crate::Data, label: &str) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_insert_debug_marker(self, &mut pass, pass_data, label)
+        Context::render_pass_insert_debug_marker(self, pass_data, label)
     }
 
-    fn render_pass_push_debug_group(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        group_label: &str,
-    ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_push_debug_group(&self, pass_data: &mut crate::Data, group_label: &str) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_push_debug_group(self, &mut pass, pass_data, group_label)
+        Context::render_pass_push_debug_group(self, pass_data, group_label)
     }
 
-    fn render_pass_pop_debug_group(&self, pass: &mut ObjectId, pass_data: &mut crate::Data) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_pop_debug_group(&self, pass_data: &mut crate::Data) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_pop_debug_group(self, &mut pass, pass_data)
+        Context::render_pass_pop_debug_group(self, pass_data)
     }
 
     fn render_pass_write_timestamp(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
         query_index: u32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let query_set = <T::QuerySetId>::from(*query_set);
         let query_set_data = downcast_ref(query_set_data);
         Context::render_pass_write_timestamp(
             self,
-            &mut pass,
             pass_data,
             &query_set,
             query_set_data,
@@ -3910,38 +3533,28 @@ where
         )
     }
 
-    fn render_pass_begin_occlusion_query(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-        query_index: u32,
-    ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_begin_occlusion_query(&self, pass_data: &mut crate::Data, query_index: u32) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_begin_occlusion_query(self, &mut pass, pass_data, query_index)
+        Context::render_pass_begin_occlusion_query(self, pass_data, query_index)
     }
 
-    fn render_pass_end_occlusion_query(&self, pass: &mut ObjectId, pass_data: &mut crate::Data) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_end_occlusion_query(&self, pass_data: &mut crate::Data) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_end_occlusion_query(self, &mut pass, pass_data)
+        Context::render_pass_end_occlusion_query(self, pass_data)
     }
 
     fn render_pass_begin_pipeline_statistics_query(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         query_set: &ObjectId,
         query_set_data: &crate::Data,
         query_index: u32,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let query_set = <T::QuerySetId>::from(*query_set);
         let query_set_data = downcast_ref(query_set_data);
         Context::render_pass_begin_pipeline_statistics_query(
             self,
-            &mut pass,
             pass_data,
             &query_set,
             query_set_data,
@@ -3949,29 +3562,22 @@ where
         )
     }
 
-    fn render_pass_end_pipeline_statistics_query(
-        &self,
-        pass: &mut ObjectId,
-        pass_data: &mut crate::Data,
-    ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
+    fn render_pass_end_pipeline_statistics_query(&self, pass_data: &mut crate::Data) {
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
-        Context::render_pass_end_pipeline_statistics_query(self, &mut pass, pass_data)
+        Context::render_pass_end_pipeline_statistics_query(self, pass_data)
     }
 
     fn render_pass_execute_bundles(
         &self,
-        pass: &mut ObjectId,
         pass_data: &mut crate::Data,
         render_bundles: &mut dyn Iterator<Item = (&ObjectId, &crate::Data)>,
     ) {
-        let mut pass = <T::RenderPassId>::from(*pass);
         let pass_data = downcast_mut::<T::RenderPassData>(pass_data);
         let mut render_bundles = render_bundles.map(|(id, data)| {
             let render_bundle_data: &<T as Context>::RenderBundleData = downcast_ref(data);
             (<T::RenderBundleId>::from(*id), render_bundle_data)
         });
-        Context::render_pass_execute_bundles(self, &mut pass, pass_data, &mut render_bundles)
+        Context::render_pass_execute_bundles(self, pass_data, &mut render_bundles)
     }
 }
 

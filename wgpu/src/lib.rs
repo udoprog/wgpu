@@ -235,7 +235,7 @@ static_assertions::assert_impl_all!(Device: Send, Sync);
 /// This type is unique to the Rust API of `wgpu`.
 /// There is no analogue in the WebGPU specification.
 #[derive(Debug, Clone)]
-pub struct SubmissionIndex(ObjectId, Arc<crate::Data>);
+pub struct SubmissionIndex(Arc<crate::Data>);
 #[cfg(send_sync)]
 static_assertions::assert_impl_all!(SubmissionIndex: Send, Sync);
 
@@ -917,7 +917,6 @@ impl Drop for CommandEncoder {
 /// https://gpuweb.github.io/gpuweb/#render-pass-encoder).
 #[derive(Debug)]
 pub struct RenderPass<'a> {
-    id: ObjectId,
     data: Box<Data>,
     parent: &'a mut CommandEncoder,
 }
@@ -930,7 +929,6 @@ pub struct RenderPass<'a> {
 /// https://gpuweb.github.io/gpuweb/#compute-pass-encoder).
 #[derive(Debug)]
 pub struct ComputePass<'a> {
-    id: ObjectId,
     data: Box<Data>,
     parent: &'a mut CommandEncoder,
 }
@@ -949,7 +947,6 @@ pub struct ComputePass<'a> {
 #[derive(Debug)]
 pub struct RenderBundleEncoder<'a> {
     context: Arc<C>,
-    id: ObjectId,
     data: Box<Data>,
     parent: &'a Device,
     /// This type should be !Send !Sync, because it represents an allocation on this thread's
@@ -2410,7 +2407,7 @@ impl Device {
         &self,
         desc: &RenderBundleEncoderDescriptor<'_>,
     ) -> RenderBundleEncoder<'_> {
-        let (id, data) = DynContext::device_create_render_bundle_encoder(
+        let data = DynContext::device_create_render_bundle_encoder(
             &*self.context,
             &self.id,
             self.data.as_ref(),
@@ -2418,7 +2415,6 @@ impl Device {
         );
         RenderBundleEncoder {
             context: Arc::clone(&self.context),
-            id,
             data,
             parent: self,
             _p: Default::default(),
@@ -3279,17 +3275,13 @@ impl CommandEncoder {
         desc: &RenderPassDescriptor<'pass, '_>,
     ) -> RenderPass<'pass> {
         let id = self.id.as_ref().unwrap();
-        let (id, data) = DynContext::command_encoder_begin_render_pass(
+        let data = DynContext::command_encoder_begin_render_pass(
             &*self.context,
             id,
             self.data.as_ref(),
             desc,
         );
-        RenderPass {
-            id,
-            data,
-            parent: self,
-        }
+        RenderPass { data, parent: self }
     }
 
     /// Begins recording of a compute pass.
@@ -3297,17 +3289,13 @@ impl CommandEncoder {
     /// This function returns a [`ComputePass`] object which records a single compute pass.
     pub fn begin_compute_pass(&mut self, desc: &ComputePassDescriptor<'_>) -> ComputePass<'_> {
         let id = self.id.as_ref().unwrap();
-        let (id, data) = DynContext::command_encoder_begin_compute_pass(
+        let data = DynContext::command_encoder_begin_compute_pass(
             &*self.context,
             id,
             self.data.as_ref(),
             desc,
         );
-        ComputePass {
-            id,
-            data,
-            parent: self,
-        }
+        ComputePass { data, parent: self }
     }
 
     /// Copy data from one buffer to another.
@@ -3529,7 +3517,6 @@ impl<'a> RenderPass<'a> {
     ) {
         DynContext::render_pass_set_bind_group(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             index,
             &bind_group.id,
@@ -3544,7 +3531,6 @@ impl<'a> RenderPass<'a> {
     pub fn set_pipeline(&mut self, pipeline: &'a RenderPipeline) {
         DynContext::render_pass_set_pipeline(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &pipeline.id,
             pipeline.data.as_ref(),
@@ -3557,12 +3543,7 @@ impl<'a> RenderPass<'a> {
     /// If this method has not been called, the blend constant defaults to [`Color::TRANSPARENT`]
     /// (all components zero).
     pub fn set_blend_constant(&mut self, color: Color) {
-        DynContext::render_pass_set_blend_constant(
-            &*self.parent.context,
-            &mut self.id,
-            self.data.as_mut(),
-            color,
-        )
+        DynContext::render_pass_set_blend_constant(&*self.parent.context, self.data.as_mut(), color)
     }
 
     /// Sets the active index buffer.
@@ -3572,7 +3553,6 @@ impl<'a> RenderPass<'a> {
     pub fn set_index_buffer(&mut self, buffer_slice: BufferSlice<'a>, index_format: IndexFormat) {
         DynContext::render_pass_set_index_buffer(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &buffer_slice.buffer.id,
             buffer_slice.buffer.data.as_ref(),
@@ -3595,7 +3575,6 @@ impl<'a> RenderPass<'a> {
     pub fn set_vertex_buffer(&mut self, slot: u32, buffer_slice: BufferSlice<'a>) {
         DynContext::render_pass_set_vertex_buffer(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             slot,
             &buffer_slice.buffer.id,
@@ -3617,7 +3596,6 @@ impl<'a> RenderPass<'a> {
     pub fn set_scissor_rect(&mut self, x: u32, y: u32, width: u32, height: u32) {
         DynContext::render_pass_set_scissor_rect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             x,
             y,
@@ -3635,7 +3613,6 @@ impl<'a> RenderPass<'a> {
     pub fn set_viewport(&mut self, x: f32, y: f32, w: f32, h: f32, min_depth: f32, max_depth: f32) {
         DynContext::render_pass_set_viewport(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             x,
             y,
@@ -3653,7 +3630,6 @@ impl<'a> RenderPass<'a> {
     pub fn set_stencil_reference(&mut self, reference: u32) {
         DynContext::render_pass_set_stencil_reference(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             reference,
         );
@@ -3663,7 +3639,6 @@ impl<'a> RenderPass<'a> {
     pub fn insert_debug_marker(&mut self, label: &str) {
         DynContext::render_pass_insert_debug_marker(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             label,
         );
@@ -3671,21 +3646,12 @@ impl<'a> RenderPass<'a> {
 
     /// Start record commands and group it into debug marker group.
     pub fn push_debug_group(&mut self, label: &str) {
-        DynContext::render_pass_push_debug_group(
-            &*self.parent.context,
-            &mut self.id,
-            self.data.as_mut(),
-            label,
-        );
+        DynContext::render_pass_push_debug_group(&*self.parent.context, self.data.as_mut(), label);
     }
 
     /// Stops command recording and creates debug group.
     pub fn pop_debug_group(&mut self) {
-        DynContext::render_pass_pop_debug_group(
-            &*self.parent.context,
-            &mut self.id,
-            self.data.as_mut(),
-        );
+        DynContext::render_pass_pop_debug_group(&*self.parent.context, self.data.as_mut());
     }
 
     /// Draws primitives from the active vertex buffer(s).
@@ -3712,7 +3678,6 @@ impl<'a> RenderPass<'a> {
     pub fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>) {
         DynContext::render_pass_draw(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             vertices,
             instances,
@@ -3746,7 +3711,6 @@ impl<'a> RenderPass<'a> {
     pub fn draw_indexed(&mut self, indices: Range<u32>, base_vertex: i32, instances: Range<u32>) {
         DynContext::render_pass_draw_indexed(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             indices,
             base_vertex,
@@ -3770,7 +3734,6 @@ impl<'a> RenderPass<'a> {
     pub fn draw_indirect(&mut self, indirect_buffer: &'a Buffer, indirect_offset: BufferAddress) {
         DynContext::render_pass_draw_indirect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -3799,7 +3762,6 @@ impl<'a> RenderPass<'a> {
     ) {
         DynContext::render_pass_draw_indexed_indirect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -3819,7 +3781,6 @@ impl<'a> RenderPass<'a> {
 
         DynContext::render_pass_execute_bundles(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &mut render_bundles,
         )
@@ -3846,7 +3807,6 @@ impl<'a> RenderPass<'a> {
     ) {
         DynContext::render_pass_multi_draw_indirect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -3874,7 +3834,6 @@ impl<'a> RenderPass<'a> {
     ) {
         DynContext::render_pass_multi_draw_indexed_indirect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -3918,7 +3877,6 @@ impl<'a> RenderPass<'a> {
     ) {
         DynContext::render_pass_multi_draw_indirect_count(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -3965,7 +3923,6 @@ impl<'a> RenderPass<'a> {
     ) {
         DynContext::render_pass_multi_draw_indexed_indirect_count(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -4023,7 +3980,6 @@ impl<'a> RenderPass<'a> {
     pub fn set_push_constants(&mut self, stages: ShaderStages, offset: u32, data: &[u8]) {
         DynContext::render_pass_set_push_constants(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             stages,
             offset,
@@ -4044,7 +4000,6 @@ impl<'a> RenderPass<'a> {
     pub fn write_timestamp(&mut self, query_set: &QuerySet, query_index: u32) {
         DynContext::render_pass_write_timestamp(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &query_set.id,
             query_set.data.as_ref(),
@@ -4059,7 +4014,6 @@ impl<'a> RenderPass<'a> {
     pub fn begin_occlusion_query(&mut self, query_index: u32) {
         DynContext::render_pass_begin_occlusion_query(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             query_index,
         );
@@ -4068,11 +4022,7 @@ impl<'a> RenderPass<'a> {
     /// End the occlusion query on this render pass. It can be started with
     /// `begin_occlusion_query`. Occlusion queries may not be nested.
     pub fn end_occlusion_query(&mut self) {
-        DynContext::render_pass_end_occlusion_query(
-            &*self.parent.context,
-            &mut self.id,
-            self.data.as_mut(),
-        );
+        DynContext::render_pass_end_occlusion_query(&*self.parent.context, self.data.as_mut());
     }
 }
 
@@ -4083,7 +4033,6 @@ impl<'a> RenderPass<'a> {
     pub fn begin_pipeline_statistics_query(&mut self, query_set: &QuerySet, query_index: u32) {
         DynContext::render_pass_begin_pipeline_statistics_query(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &query_set.id,
             query_set.data.as_ref(),
@@ -4096,7 +4045,6 @@ impl<'a> RenderPass<'a> {
     pub fn end_pipeline_statistics_query(&mut self) {
         DynContext::render_pass_end_pipeline_statistics_query(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
         );
     }
@@ -4109,7 +4057,6 @@ impl<'a> Drop for RenderPass<'a> {
             self.parent.context.command_encoder_end_render_pass(
                 parent_id,
                 self.parent.data.as_ref(),
-                &mut self.id,
                 self.data.as_mut(),
             );
         }
@@ -4131,7 +4078,6 @@ impl<'a> ComputePass<'a> {
     ) {
         DynContext::compute_pass_set_bind_group(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             index,
             &bind_group.id,
@@ -4144,7 +4090,6 @@ impl<'a> ComputePass<'a> {
     pub fn set_pipeline(&mut self, pipeline: &'a ComputePipeline) {
         DynContext::compute_pass_set_pipeline(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &pipeline.id,
             pipeline.data.as_ref(),
@@ -4155,7 +4100,6 @@ impl<'a> ComputePass<'a> {
     pub fn insert_debug_marker(&mut self, label: &str) {
         DynContext::compute_pass_insert_debug_marker(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             label,
         );
@@ -4163,21 +4107,12 @@ impl<'a> ComputePass<'a> {
 
     /// Start record commands and group it into debug marker group.
     pub fn push_debug_group(&mut self, label: &str) {
-        DynContext::compute_pass_push_debug_group(
-            &*self.parent.context,
-            &mut self.id,
-            self.data.as_mut(),
-            label,
-        );
+        DynContext::compute_pass_push_debug_group(&*self.parent.context, self.data.as_mut(), label);
     }
 
     /// Stops command recording and creates debug group.
     pub fn pop_debug_group(&mut self) {
-        DynContext::compute_pass_pop_debug_group(
-            &*self.parent.context,
-            &mut self.id,
-            self.data.as_mut(),
-        );
+        DynContext::compute_pass_pop_debug_group(&*self.parent.context, self.data.as_mut());
     }
 
     /// Dispatches compute work operations.
@@ -4186,7 +4121,6 @@ impl<'a> ComputePass<'a> {
     pub fn dispatch_workgroups(&mut self, x: u32, y: u32, z: u32) {
         DynContext::compute_pass_dispatch_workgroups(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             x,
             y,
@@ -4204,7 +4138,6 @@ impl<'a> ComputePass<'a> {
     ) {
         DynContext::compute_pass_dispatch_workgroups_indirect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -4226,7 +4159,6 @@ impl<'a> ComputePass<'a> {
     pub fn set_push_constants(&mut self, offset: u32, data: &[u8]) {
         DynContext::compute_pass_set_push_constants(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             offset,
             data,
@@ -4245,7 +4177,6 @@ impl<'a> ComputePass<'a> {
     pub fn write_timestamp(&mut self, query_set: &QuerySet, query_index: u32) {
         DynContext::compute_pass_write_timestamp(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &query_set.id,
             query_set.data.as_ref(),
@@ -4261,7 +4192,6 @@ impl<'a> ComputePass<'a> {
     pub fn begin_pipeline_statistics_query(&mut self, query_set: &QuerySet, query_index: u32) {
         DynContext::compute_pass_begin_pipeline_statistics_query(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &query_set.id,
             query_set.data.as_ref(),
@@ -4274,7 +4204,6 @@ impl<'a> ComputePass<'a> {
     pub fn end_pipeline_statistics_query(&mut self) {
         DynContext::compute_pass_end_pipeline_statistics_query(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
         );
     }
@@ -4287,7 +4216,6 @@ impl<'a> Drop for ComputePass<'a> {
             self.parent.context.command_encoder_end_compute_pass(
                 parent_id,
                 self.parent.data.as_ref(),
-                &mut self.id,
                 self.data.as_mut(),
             );
         }
@@ -4297,8 +4225,7 @@ impl<'a> Drop for ComputePass<'a> {
 impl<'a> RenderBundleEncoder<'a> {
     /// Finishes recording and returns a [`RenderBundle`] that can be executed in other render passes.
     pub fn finish(self, desc: &RenderBundleDescriptor<'_>) -> RenderBundle {
-        let (id, data) =
-            DynContext::render_bundle_encoder_finish(&*self.context, self.id, self.data, desc);
+        let (id, data) = DynContext::render_bundle_encoder_finish(&*self.context, self.data, desc);
         RenderBundle {
             context: Arc::clone(&self.context),
             id,
@@ -4318,7 +4245,6 @@ impl<'a> RenderBundleEncoder<'a> {
     ) {
         DynContext::render_bundle_encoder_set_bind_group(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             index,
             &bind_group.id,
@@ -4333,7 +4259,6 @@ impl<'a> RenderBundleEncoder<'a> {
     pub fn set_pipeline(&mut self, pipeline: &'a RenderPipeline) {
         DynContext::render_bundle_encoder_set_pipeline(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &pipeline.id,
             pipeline.data.as_ref(),
@@ -4347,7 +4272,6 @@ impl<'a> RenderBundleEncoder<'a> {
     pub fn set_index_buffer(&mut self, buffer_slice: BufferSlice<'a>, index_format: IndexFormat) {
         DynContext::render_bundle_encoder_set_index_buffer(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &buffer_slice.buffer.id,
             buffer_slice.buffer.data.as_ref(),
@@ -4370,7 +4294,6 @@ impl<'a> RenderBundleEncoder<'a> {
     pub fn set_vertex_buffer(&mut self, slot: u32, buffer_slice: BufferSlice<'a>) {
         DynContext::render_bundle_encoder_set_vertex_buffer(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             slot,
             &buffer_slice.buffer.id,
@@ -4401,7 +4324,6 @@ impl<'a> RenderBundleEncoder<'a> {
     pub fn draw(&mut self, vertices: Range<u32>, instances: Range<u32>) {
         DynContext::render_bundle_encoder_draw(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             vertices,
             instances,
@@ -4432,7 +4354,6 @@ impl<'a> RenderBundleEncoder<'a> {
     pub fn draw_indexed(&mut self, indices: Range<u32>, base_vertex: i32, instances: Range<u32>) {
         DynContext::render_bundle_encoder_draw_indexed(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             indices,
             base_vertex,
@@ -4448,7 +4369,6 @@ impl<'a> RenderBundleEncoder<'a> {
     pub fn draw_indirect(&mut self, indirect_buffer: &'a Buffer, indirect_offset: BufferAddress) {
         DynContext::render_bundle_encoder_draw_indirect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -4470,7 +4390,6 @@ impl<'a> RenderBundleEncoder<'a> {
     ) {
         DynContext::render_bundle_encoder_draw_indexed_indirect(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             &indirect_buffer.id,
             indirect_buffer.data.as_ref(),
@@ -4512,7 +4431,6 @@ impl<'a> RenderBundleEncoder<'a> {
     pub fn set_push_constants(&mut self, stages: ShaderStages, offset: u32, data: &[u8]) {
         DynContext::render_bundle_encoder_set_push_constants(
             &*self.parent.context,
-            &mut self.id,
             self.data.as_mut(),
             stages,
             offset,
@@ -4693,14 +4611,14 @@ impl Queue {
             .into_iter()
             .map(|mut comb| (comb.id.take().unwrap(), comb.data.take().unwrap()));
 
-        let (raw, data) = DynContext::queue_submit(
+        let data = DynContext::queue_submit(
             &*self.context,
             &self.id,
             self.data.as_ref(),
             &mut command_buffers,
         );
 
-        SubmissionIndex(raw, data)
+        SubmissionIndex(data)
     }
 
     /// Gets the amount of nanoseconds each tick of a timestamp query represents.
