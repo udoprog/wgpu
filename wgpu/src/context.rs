@@ -931,35 +931,32 @@ pub trait Context: Debug + WasmNotSendSync + Sized {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct ObjectId {
     /// ID that is unique at any given time
-    id: Option<NonZeroU64>,
+    id: NonZeroU64,
     /// ID that is unique at all times
-    global_id: Option<NonZeroU64>,
+    global_id: NonZeroU64,
 }
 
 impl ObjectId {
     #[allow(dead_code)]
     pub fn new(id: NonZeroU64, global_id: NonZeroU64) -> Self {
-        Self {
-            id: Some(id),
-            global_id: Some(global_id),
-        }
+        Self { id, global_id }
     }
 
     #[allow(dead_code)]
     pub fn from_global_id(global_id: NonZeroU64) -> Self {
         Self {
-            id: Some(global_id),
-            global_id: Some(global_id),
+            id: global_id,
+            global_id,
         }
     }
 
     #[allow(dead_code)]
     pub fn id(&self) -> NonZeroU64 {
-        self.id.unwrap()
+        self.id
     }
 
     pub fn global_id(&self) -> NonZeroU64 {
-        self.global_id.unwrap()
+        self.global_id
     }
 }
 
