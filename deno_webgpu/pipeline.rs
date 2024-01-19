@@ -15,45 +15,51 @@ use super::error::WebGpuResult;
 
 const MAX_BIND_GROUPS: usize = 8;
 
-pub(crate) struct WebGpuPipelineLayout(
-    pub(crate) crate::Instance,
-    pub(crate) wgpu_core::id::PipelineLayoutId,
-);
+pub(crate) struct WebGpuPipelineLayout {
+    pub(crate) instance: crate::Instance,
+    pub(crate) id: wgpu_core::id::PipelineLayoutId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuPipelineLayout {
     fn name(&self) -> Cow<str> {
         "webGPUPipelineLayout".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.pipeline_layout_drop(self.1));
+        self.core.pipeline_layout_drop(&self.instance, self.id);
     }
 }
 
-pub(crate) struct WebGpuComputePipeline(
-    pub(crate) crate::Instance,
-    pub(crate) wgpu_core::id::ComputePipelineId,
-);
+pub(crate) struct WebGpuComputePipeline {
+    pub(crate) instance: crate::Instance,
+    pub(crate) id: wgpu_core::id::ComputePipelineId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuComputePipeline {
     fn name(&self) -> Cow<str> {
         "webGPUComputePipeline".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.compute_pipeline_drop(self.1));
+        self.core.compute_pipeline_drop(&self.instance, self.id);
     }
 }
 
-pub(crate) struct WebGpuRenderPipeline(
-    pub(crate) crate::Instance,
-    pub(crate) wgpu_core::id::RenderPipelineId,
-);
+pub(crate) struct WebGpuRenderPipeline {
+    pub(crate) instance: crate::Instance,
+    pub(crate) id: wgpu_core::id::RenderPipelineId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuRenderPipeline {
     fn name(&self) -> Cow<str> {
         "webGPURenderPipeline".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.render_pipeline_drop(self.1));
+        self.core.render_pipeline_drop(&self.instance, self.id);
     }
 }
 
@@ -88,15 +94,14 @@ pub fn op_webgpu_create_compute_pipeline(
     #[serde] compute: GpuProgrammableStage,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(device_rid)?;
-    let device = device_resource.1;
 
     let pipeline_layout = match layout {
         GPUPipelineLayoutOrGPUAutoLayoutMode::Layout(rid) => {
-            let id = state.resource_table.get::<WebGpuPipelineLayout>(rid)?;
-            Some(id.1)
+            let pipeline_layout = state.resource_table.get::<WebGpuPipelineLayout>(rid)?;
+            Some(pipeline_layout.id)
         }
         GPUPipelineLayoutOrGPUAutoLayoutMode::Auto(GPUAutoLayoutMode::Auto) => None,
     };
@@ -109,7 +114,7 @@ pub fn op_webgpu_create_compute_pipeline(
         label: Some(label),
         layout: pipeline_layout,
         stage: wgpu_core::pipeline::ProgrammableStageDescriptor {
-            module: compute_shader_module_resource.1,
+            module: compute_shader_module_resource.id,
             entry_point: Cow::from(compute.entry_point),
             // TODO(lucacasonato): support args.compute.constants
         },
@@ -124,16 +129,19 @@ pub fn op_webgpu_create_compute_pipeline(
         }
     };
 
-    let (compute_pipeline, maybe_err) = gfx_select!(device => instance.device_create_compute_pipeline(
-      device,
-      &descriptor,
-      (),
-      implicit_pipelines
-    ));
+    let (compute_pipeline, maybe_err) = device.core.device_create_compute_pipeline(
+        instance,
+        device.id,
+        &descriptor,
+        (),
+        implicit_pipelines,
+    );
 
-    let rid = state
-        .resource_table
-        .add(WebGpuComputePipeline(instance.clone(), compute_pipeline));
+    let rid = state.resource_table.add(WebGpuComputePipeline {
+        instance: instance.clone(),
+        id: compute_pipeline,
+        core: device.core,
+    });
 
     Ok(WebGpuResult::rid_err(rid, maybe_err))
 }
@@ -154,22 +162,23 @@ pub fn op_webgpu_compute_pipeline_get_bind_group_layout(
     index: u32,
 ) -> Result<PipelineLayout, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let compute_pipeline_resource = state
+    let compute_pipeline = state
         .resource_table
         .get::<WebGpuComputePipeline>(compute_pipeline_rid)?;
-    let compute_pipeline = compute_pipeline_resource.1;
 
-    let (bind_group_layout, maybe_err) = gfx_select!(compute_pipeline => instance.compute_pipeline_get_bind_group_layout(compute_pipeline, index, ()));
+    let (id, maybe_err) = compute_pipeline
+        .core
+        .compute_pipeline_get_bind_group_layout(instance, compute_pipeline.id, index, ());
 
-    let label =
-        gfx_select!(bind_group_layout => instance.bind_group_layout_label(bind_group_layout));
+    let label = compute_pipeline.core.bind_group_layout_label(instance, id);
 
     let rid = state
         .resource_table
-        .add(super::binding::WebGpuBindGroupLayout(
-            instance.clone(),
-            bind_group_layout,
-        ));
+        .add(super::binding::WebGpuBindGroupLayout {
+            instance: instance.clone(),
+            id,
+            core: compute_pipeline.core,
+        });
 
     Ok(PipelineLayout {
         rid,
@@ -329,15 +338,14 @@ pub fn op_webgpu_create_render_pipeline(
     #[serde] args: CreateRenderPipelineArgs,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(args.device_rid)?;
-    let device = device_resource.1;
 
     let layout = match args.layout {
         GPUPipelineLayoutOrGPUAutoLayoutMode::Layout(rid) => {
-            let pipeline_layout_resource = state.resource_table.get::<WebGpuPipelineLayout>(rid)?;
-            Some(pipeline_layout_resource.1)
+            let pipeline_layout = state.resource_table.get::<WebGpuPipelineLayout>(rid)?;
+            Some(pipeline_layout.id)
         }
         GPUPipelineLayoutOrGPUAutoLayoutMode::Auto(GPUAutoLayoutMode::Auto) => None,
     };
@@ -354,7 +362,7 @@ pub fn op_webgpu_create_render_pipeline(
 
         Some(wgpu_core::pipeline::FragmentState {
             stage: wgpu_core::pipeline::ProgrammableStageDescriptor {
-                module: fragment_shader_module_resource.1,
+                module: fragment_shader_module_resource.id,
                 entry_point: Cow::from(fragment.entry_point),
             },
             targets: Cow::from(fragment.targets),
@@ -376,7 +384,7 @@ pub fn op_webgpu_create_render_pipeline(
         layout,
         vertex: wgpu_core::pipeline::VertexState {
             stage: wgpu_core::pipeline::ProgrammableStageDescriptor {
-                module: vertex_shader_module_resource.1,
+                module: vertex_shader_module_resource.id,
                 entry_point: Cow::Owned(args.vertex.entry_point),
             },
             buffers: Cow::Owned(vertex_buffers),
@@ -398,16 +406,19 @@ pub fn op_webgpu_create_render_pipeline(
         }
     };
 
-    let (render_pipeline, maybe_err) = gfx_select!(device => instance.device_create_render_pipeline(
-      device,
-      &descriptor,
-      (),
-      implicit_pipelines
-    ));
+    let (id, maybe_err) = device.core.device_create_render_pipeline(
+        instance,
+        device.id,
+        &descriptor,
+        (),
+        implicit_pipelines,
+    );
 
-    let rid = state
-        .resource_table
-        .add(WebGpuRenderPipeline(instance.clone(), render_pipeline));
+    let rid = state.resource_table.add(WebGpuRenderPipeline {
+        instance: instance.clone(),
+        id,
+        core: device.core,
+    });
 
     Ok(WebGpuResult::rid_err(rid, maybe_err))
 }
@@ -420,22 +431,26 @@ pub fn op_webgpu_render_pipeline_get_bind_group_layout(
     index: u32,
 ) -> Result<PipelineLayout, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let render_pipeline_resource = state
+    let render_pipeline = state
         .resource_table
         .get::<WebGpuRenderPipeline>(render_pipeline_rid)?;
-    let render_pipeline = render_pipeline_resource.1;
 
-    let (bind_group_layout, maybe_err) = gfx_select!(render_pipeline => instance.render_pipeline_get_bind_group_layout(render_pipeline, index, ()));
+    let (id, maybe_err) = render_pipeline.core.render_pipeline_get_bind_group_layout(
+        instance,
+        render_pipeline.id,
+        index,
+        (),
+    );
 
-    let label =
-        gfx_select!(bind_group_layout => instance.bind_group_layout_label(bind_group_layout));
+    let label = render_pipeline.core.bind_group_layout_label(instance, id);
 
     let rid = state
         .resource_table
-        .add(super::binding::WebGpuBindGroupLayout(
-            instance.clone(),
-            bind_group_layout,
-        ));
+        .add(super::binding::WebGpuBindGroupLayout {
+            instance: instance.clone(),
+            id,
+            core: render_pipeline.core,
+        });
 
     Ok(PipelineLayout {
         rid,

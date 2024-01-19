@@ -20,19 +20,18 @@ pub fn op_webgpu_queue_submit(
     #[serde] command_buffers: Vec<ResourceId>,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let queue_resource = state.resource_table.get::<WebGpuQueue>(queue_rid)?;
-    let queue = queue_resource.1;
+    let queue = state.resource_table.get::<WebGpuQueue>(queue_rid)?;
 
     let ids = command_buffers
         .iter()
         .map(|rid| {
-            let buffer_resource = state.resource_table.get::<WebGpuCommandBuffer>(*rid)?;
-            let mut id = buffer_resource.1.borrow_mut();
+            let buffer = state.resource_table.get::<WebGpuCommandBuffer>(*rid)?;
+            let mut id = buffer.id.borrow_mut();
             Ok(id.take().unwrap())
         })
         .collect::<Result<Vec<_>, AnyError>>()?;
 
-    let maybe_err = gfx_select!(queue => instance.queue_submit(queue, &ids)).err();
+    let maybe_err = queue.core.queue_submit(instance, queue.id, &ids).err();
 
     for rid in command_buffers {
         let resource = state.resource_table.take::<WebGpuCommandBuffer>(rid)?;
@@ -72,24 +71,20 @@ pub fn op_webgpu_write_buffer(
     #[buffer] buf: &[u8],
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let buffer_resource = state
+    let buffer = state
         .resource_table
         .get::<super::buffer::WebGpuBuffer>(buffer)?;
-    let buffer = buffer_resource.1;
-    let queue_resource = state.resource_table.get::<WebGpuQueue>(queue_rid)?;
-    let queue = queue_resource.1;
+    let queue = state.resource_table.get::<WebGpuQueue>(queue_rid)?;
 
     let data = match size {
         Some(size) => &buf[data_offset..(data_offset + size)],
         None => &buf[data_offset..],
     };
-    let maybe_err = gfx_select!(queue => instance.queue_write_buffer(
-      queue,
-      buffer,
-      buffer_offset,
-      data
-    ))
-    .err();
+
+    let maybe_err = queue
+        .core
+        .queue_write_buffer(instance, queue.id, buffer.id, buffer_offset, data)
+        .err();
 
     Ok(WebGpuResult::maybe_err(maybe_err))
 }
@@ -108,8 +103,7 @@ pub fn op_webgpu_write_texture(
     let texture_resource = state
         .resource_table
         .get::<super::texture::WebGpuTexture>(destination.texture)?;
-    let queue_resource = state.resource_table.get::<WebGpuQueue>(queue_rid)?;
-    let queue = queue_resource.1;
+    let queue = state.resource_table.get::<WebGpuQueue>(queue_rid)?;
 
     let destination = wgpu_core::command::ImageCopyTexture {
         texture: texture_resource.id,
@@ -119,11 +113,13 @@ pub fn op_webgpu_write_texture(
     };
     let data_layout = data_layout.into();
 
-    gfx_ok!(queue => instance.queue_write_texture(
-      queue,
-      &destination,
-      buf,
-      &data_layout,
-      &size
-    ))
+    gfx_ok! {
+        queue => instance.queue_write_texture(
+            queue.id,
+            &destination,
+            buf,
+            &data_layout,
+            &size
+        )
+    }
 }

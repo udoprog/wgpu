@@ -77,7 +77,9 @@ pub fn op_webgpu_surface_configure(
         view_formats: args.view_formats,
     };
 
-    let err = gfx_select!(device => instance.surface_configure(surface, device, &conf));
+    let err = device
+        .core
+        .surface_configure(instance, surface, device, &conf);
 
     Ok(WebGpuResult::maybe_err(err))
 }
@@ -97,7 +99,9 @@ pub fn op_webgpu_surface_get_current_texture(
     let surface_resource = state.resource_table.get::<WebGpuSurface>(surface_rid)?;
     let surface = surface_resource.1;
 
-    let output = gfx_select!(device => instance.surface_get_current_texture(surface, ()))?;
+    let output = device
+        .core
+        .surface_get_current_texture(instance, surface, ())?;
 
     match output.status {
         SurfaceStatus::Good | SurfaceStatus::Suboptimal => {
@@ -127,7 +131,6 @@ pub fn op_webgpu_surface_present(
     let surface_resource = state.resource_table.get::<WebGpuSurface>(surface_rid)?;
     let surface = surface_resource.1;
 
-    let _ = gfx_select!(device => instance.surface_present(surface))?;
-
+    let _ = device.core.surface_present(instance, surface)?;
     Ok(())
 }

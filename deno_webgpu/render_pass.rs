@@ -163,10 +163,10 @@ pub fn op_webgpu_render_pass_execute_bundles(
     let bundles = bundles
         .iter()
         .map(|rid| {
-            let render_bundle_resource = state
+            let render_bundle = state
                 .resource_table
                 .get::<super::bundle::WebGpuRenderBundle>(*rid)?;
-            Ok(render_bundle_resource.1)
+            Ok(render_bundle.id)
         })
         .collect::<Result<Vec<_>, AnyError>>()?;
 
@@ -194,18 +194,16 @@ pub fn op_webgpu_render_pass_end(
     #[smi] command_encoder_rid: ResourceId,
     #[smi] render_pass_rid: ResourceId,
 ) -> Result<WebGpuResult, AnyError> {
-    let command_encoder_resource =
-        state
-            .resource_table
-            .get::<super::command_encoder::WebGpuCommandEncoder>(command_encoder_rid)?;
-    let command_encoder = command_encoder_resource.1;
+    let command_encoder = state
+        .resource_table
+        .get::<super::command_encoder::WebGpuCommandEncoder>(command_encoder_rid)?;
     let render_pass_resource = state
         .resource_table
         .take::<WebGpuRenderPass>(render_pass_rid)?;
     let render_pass = &render_pass_resource.0.borrow();
     let instance = state.borrow::<super::Instance>();
 
-    gfx_ok!(command_encoder => instance.command_encoder_run_render_pass(command_encoder, render_pass))
+    gfx_ok!(command_encoder => instance.command_encoder_run_render_pass(command_encoder.id, render_pass))
 }
 
 #[op2]
@@ -219,7 +217,7 @@ pub fn op_webgpu_render_pass_set_bind_group(
     #[number] dynamic_offsets_data_start: usize,
     #[number] dynamic_offsets_data_length: usize,
 ) -> Result<WebGpuResult, AnyError> {
-    let bind_group_resource = state
+    let bind_gropu = state
         .resource_table
         .get::<super::binding::WebGpuBindGroup>(bind_group)?;
     let render_pass_resource = state
@@ -241,7 +239,7 @@ pub fn op_webgpu_render_pass_set_bind_group(
         wgpu_core::command::render_ffi::wgpu_render_pass_set_bind_group(
             &mut render_pass_resource.0.borrow_mut(),
             index,
-            bind_group_resource.1,
+            bind_gropu.id,
             dynamic_offsets_data.as_ptr(),
             dynamic_offsets_data.len(),
         );
@@ -324,7 +322,7 @@ pub fn op_webgpu_render_pass_set_pipeline(
     #[smi] render_pass_rid: ResourceId,
     pipeline: u32,
 ) -> Result<WebGpuResult, AnyError> {
-    let render_pipeline_resource = state
+    let render_pipeline = state
         .resource_table
         .get::<super::pipeline::WebGpuRenderPipeline>(pipeline)?;
     let render_pass_resource = state
@@ -333,7 +331,7 @@ pub fn op_webgpu_render_pass_set_pipeline(
 
     wgpu_core::command::render_ffi::wgpu_render_pass_set_pipeline(
         &mut render_pass_resource.0.borrow_mut(),
-        render_pipeline_resource.1,
+        render_pipeline.id,
     );
 
     Ok(WebGpuResult::empty())
@@ -349,7 +347,7 @@ pub fn op_webgpu_render_pass_set_index_buffer(
     #[number] offset: u64,
     #[number] size: Option<u64>,
 ) -> Result<WebGpuResult, AnyError> {
-    let buffer_resource = state
+    let buffer = state
         .resource_table
         .get::<super::buffer::WebGpuBuffer>(buffer)?;
     let render_pass_resource = state
@@ -365,12 +363,10 @@ pub fn op_webgpu_render_pass_set_index_buffer(
         None
     };
 
-    render_pass_resource.0.borrow_mut().set_index_buffer(
-        buffer_resource.1,
-        index_format,
-        offset,
-        size,
-    );
+    render_pass_resource
+        .0
+        .borrow_mut()
+        .set_index_buffer(buffer.id, index_format, offset, size);
 
     Ok(WebGpuResult::empty())
 }
@@ -385,7 +381,7 @@ pub fn op_webgpu_render_pass_set_vertex_buffer(
     #[number] offset: u64,
     #[number] size: Option<u64>,
 ) -> Result<WebGpuResult, AnyError> {
-    let buffer_resource = state
+    let buffer = state
         .resource_table
         .get::<super::buffer::WebGpuBuffer>(buffer)?;
     let render_pass_resource = state
@@ -404,7 +400,7 @@ pub fn op_webgpu_render_pass_set_vertex_buffer(
     wgpu_core::command::render_ffi::wgpu_render_pass_set_vertex_buffer(
         &mut render_pass_resource.0.borrow_mut(),
         slot,
-        buffer_resource.1,
+        buffer.id,
         offset,
         size,
     );
@@ -472,7 +468,7 @@ pub fn op_webgpu_render_pass_draw_indirect(
     indirect_buffer: u32,
     #[number] indirect_offset: u64,
 ) -> Result<WebGpuResult, AnyError> {
-    let buffer_resource = state
+    let buffer = state
         .resource_table
         .get::<super::buffer::WebGpuBuffer>(indirect_buffer)?;
     let render_pass_resource = state
@@ -481,7 +477,7 @@ pub fn op_webgpu_render_pass_draw_indirect(
 
     wgpu_core::command::render_ffi::wgpu_render_pass_draw_indirect(
         &mut render_pass_resource.0.borrow_mut(),
-        buffer_resource.1,
+        buffer.id,
         indirect_offset,
     );
 
@@ -496,16 +492,16 @@ pub fn op_webgpu_render_pass_draw_indexed_indirect(
     indirect_buffer: u32,
     #[number] indirect_offset: u64,
 ) -> Result<WebGpuResult, AnyError> {
-    let buffer_resource = state
+    let buffer = state
         .resource_table
         .get::<super::buffer::WebGpuBuffer>(indirect_buffer)?;
-    let render_pass_resource = state
+    let render_pass = state
         .resource_table
         .get::<WebGpuRenderPass>(render_pass_rid)?;
 
     wgpu_core::command::render_ffi::wgpu_render_pass_draw_indexed_indirect(
-        &mut render_pass_resource.0.borrow_mut(),
-        buffer_resource.1,
+        &mut render_pass.0.borrow_mut(),
+        buffer.id,
         indirect_offset,
     );
 

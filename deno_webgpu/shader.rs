@@ -10,17 +10,19 @@ use std::rc::Rc;
 
 use super::error::WebGpuResult;
 
-pub(crate) struct WebGpuShaderModule(
-    pub(crate) super::Instance,
-    pub(crate) wgpu_core::id::ShaderModuleId,
-);
+pub(crate) struct WebGpuShaderModule {
+    pub(crate) instance: super::Instance,
+    pub(crate) id: wgpu_core::id::ShaderModuleId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuShaderModule {
     fn name(&self) -> Cow<str> {
         "webGPUShaderModule".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.shader_module_drop(self.1));
+        self.core.shader_module_drop(&self.instance, self.id);
     }
 }
 
@@ -33,10 +35,9 @@ pub fn op_webgpu_create_shader_module(
     #[string] code: Cow<str>,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(device_rid)?;
-    let device = device_resource.1;
 
     let source = wgpu_core::pipeline::ShaderModuleSource::Wgsl(code);
 
@@ -45,10 +46,12 @@ pub fn op_webgpu_create_shader_module(
         shader_bound_checks: wgpu_types::ShaderBoundChecks::default(),
     };
 
-    gfx_put!(device => instance.device_create_shader_module(
-    device,
-    &descriptor,
-    source,
-    ()
-  ) => state, WebGpuShaderModule)
+    gfx_put! {
+        device => instance.device_create_shader_module(
+            device.id,
+            &descriptor,
+            source,
+            ()
+        ) => state, WebGpuShaderModule
+    }
 }

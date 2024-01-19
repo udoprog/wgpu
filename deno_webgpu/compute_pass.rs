@@ -24,7 +24,7 @@ pub fn op_webgpu_compute_pass_set_pipeline(
     #[smi] compute_pass_rid: ResourceId,
     #[smi] pipeline: ResourceId,
 ) -> Result<WebGpuResult, AnyError> {
-    let compute_pipeline_resource = state
+    let compute_pipeline = state
         .resource_table
         .get::<super::pipeline::WebGpuComputePipeline>(pipeline)?;
     let compute_pass_resource = state
@@ -33,7 +33,7 @@ pub fn op_webgpu_compute_pass_set_pipeline(
 
     wgpu_core::command::compute_ffi::wgpu_compute_pass_set_pipeline(
         &mut compute_pass_resource.0.borrow_mut(),
-        compute_pipeline_resource.1,
+        compute_pipeline.id,
     );
 
     Ok(WebGpuResult::empty())
@@ -70,7 +70,7 @@ pub fn op_webgpu_compute_pass_dispatch_workgroups_indirect(
     #[smi] indirect_buffer: ResourceId,
     #[number] indirect_offset: u64,
 ) -> Result<WebGpuResult, AnyError> {
-    let buffer_resource = state
+    let buffer = state
         .resource_table
         .get::<super::buffer::WebGpuBuffer>(indirect_buffer)?;
     let compute_pass_resource = state
@@ -79,7 +79,7 @@ pub fn op_webgpu_compute_pass_dispatch_workgroups_indirect(
 
     wgpu_core::command::compute_ffi::wgpu_compute_pass_dispatch_workgroups_indirect(
         &mut compute_pass_resource.0.borrow_mut(),
-        buffer_resource.1,
+        buffer.id,
         indirect_offset,
     );
 
@@ -93,11 +93,9 @@ pub fn op_webgpu_compute_pass_end(
     #[smi] command_encoder_rid: ResourceId,
     #[smi] compute_pass_rid: ResourceId,
 ) -> Result<WebGpuResult, AnyError> {
-    let command_encoder_resource =
-        state
-            .resource_table
-            .get::<super::command_encoder::WebGpuCommandEncoder>(command_encoder_rid)?;
-    let command_encoder = command_encoder_resource.1;
+    let command_encoder = state
+        .resource_table
+        .get::<super::command_encoder::WebGpuCommandEncoder>(command_encoder_rid)?;
     let compute_pass_resource = state
         .resource_table
         .take::<WebGpuComputePass>(compute_pass_rid)?;
@@ -105,8 +103,8 @@ pub fn op_webgpu_compute_pass_end(
     let instance = state.borrow::<super::Instance>();
 
     gfx_ok!(command_encoder => instance.command_encoder_run_compute_pass(
-      command_encoder,
-      compute_pass
+        command_encoder.id,
+        compute_pass
     ))
 }
 
@@ -121,7 +119,7 @@ pub fn op_webgpu_compute_pass_set_bind_group(
     #[number] dynamic_offsets_data_start: usize,
     #[number] dynamic_offsets_data_length: usize,
 ) -> Result<WebGpuResult, AnyError> {
-    let bind_group_resource = state
+    let bind_group = state
         .resource_table
         .get::<super::binding::WebGpuBindGroup>(bind_group)?;
     let compute_pass_resource = state
@@ -143,7 +141,7 @@ pub fn op_webgpu_compute_pass_set_bind_group(
         wgpu_core::command::compute_ffi::wgpu_compute_pass_set_bind_group(
             &mut compute_pass_resource.0.borrow_mut(),
             index,
-            bind_group_resource.1,
+            bind_group.id,
             dynamic_offsets_data.as_ptr(),
             dynamic_offsets_data.len(),
         );

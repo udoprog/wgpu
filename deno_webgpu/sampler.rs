@@ -11,17 +11,19 @@ use std::rc::Rc;
 
 use super::error::WebGpuResult;
 
-pub(crate) struct WebGpuSampler(
-    pub(crate) crate::Instance,
-    pub(crate) wgpu_core::id::SamplerId,
-);
+pub(crate) struct WebGpuSampler {
+    pub(crate) instance: crate::Instance,
+    pub(crate) id: wgpu_core::id::SamplerId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuSampler {
     fn name(&self) -> Cow<str> {
         "webGPUSampler".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.sampler_drop(self.1));
+        self.core.sampler_drop(&self.instance, self.id);
     }
 }
 
@@ -49,10 +51,9 @@ pub fn op_webgpu_create_sampler(
     #[serde] args: CreateSamplerArgs,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(args.device_rid)?;
-    let device = device_resource.1;
 
     let descriptor = wgpu_core::resource::SamplerDescriptor {
         label: Some(Cow::Owned(args.label)),
@@ -71,9 +72,11 @@ pub fn op_webgpu_create_sampler(
         border_color: None, // native-only
     };
 
-    gfx_put!(device => instance.device_create_sampler(
-    device,
-    &descriptor,
-    ()
-  ) => state, WebGpuSampler)
+    gfx_put! {
+        device => instance.device_create_sampler(
+            device.id,
+            &descriptor,
+            ()
+        ) => state, WebGpuSampler
+    }
 }

@@ -10,32 +10,37 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 use super::error::WebGpuResult;
+use super::pipeline::WebGpuPipelineLayout;
 
-pub(crate) struct WebGpuBindGroupLayout(
-    pub(crate) crate::Instance,
-    pub(crate) wgpu_core::id::BindGroupLayoutId,
-);
+pub(crate) struct WebGpuBindGroupLayout {
+    pub(crate) instance: crate::Instance,
+    pub(crate) id: wgpu_core::id::BindGroupLayoutId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuBindGroupLayout {
     fn name(&self) -> Cow<str> {
         "webGPUBindGroupLayout".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.bind_group_layout_drop(self.1));
+        self.core.bind_group_layout_drop(&self.instance, self.id)
     }
 }
 
-pub(crate) struct WebGpuBindGroup(
-    pub(crate) crate::Instance,
-    pub(crate) wgpu_core::id::BindGroupId,
-);
+pub(crate) struct WebGpuBindGroup {
+    pub(crate) instance: crate::Instance,
+    pub(crate) id: wgpu_core::id::BindGroupId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuBindGroup {
     fn name(&self) -> Cow<str> {
         "webGPUBindGroup".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.bind_group_drop(self.1));
+        self.core.bind_group_drop(&self.instance, self.id);
     }
 }
 
@@ -183,10 +188,9 @@ pub fn op_webgpu_create_bind_group_layout(
     #[serde] entries: Vec<GpuBindGroupLayoutEntry>,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(device_rid)?;
-    let device = device_resource.1;
 
     let entries = entries
         .into_iter()
@@ -206,10 +210,10 @@ pub fn op_webgpu_create_bind_group_layout(
     };
 
     gfx_put!(device => instance.device_create_bind_group_layout(
-    device,
-    &descriptor,
-    ()
-  ) => state, WebGpuBindGroupLayout)
+        device.id,
+        &descriptor,
+        ()
+    ) => state, WebGpuBindGroupLayout)
 }
 
 #[op2]
@@ -221,16 +225,15 @@ pub fn op_webgpu_create_pipeline_layout(
     #[serde] bind_group_layouts: Vec<u32>,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(device_rid)?;
-    let device = device_resource.1;
 
     let bind_group_layouts = bind_group_layouts
         .into_iter()
         .map(|rid| {
             let bind_group_layout = state.resource_table.get::<WebGpuBindGroupLayout>(rid)?;
-            Ok(bind_group_layout.1)
+            Ok(bind_group_layout.id)
         })
         .collect::<Result<Vec<_>, AnyError>>()?;
 
@@ -241,10 +244,10 @@ pub fn op_webgpu_create_pipeline_layout(
     };
 
     gfx_put!(device => instance.device_create_pipeline_layout(
-    device,
-    &descriptor,
-    ()
-  ) => state, super::pipeline::WebGpuPipelineLayout)
+        device.id,
+        &descriptor,
+        ()
+    ) => state, WebGpuPipelineLayout)
 }
 
 #[derive(Deserialize)]
@@ -267,10 +270,9 @@ pub fn op_webgpu_create_bind_group(
     #[serde] entries: Vec<GpuBindGroupEntry>,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(device_rid)?;
-    let device = device_resource.1;
 
     let entries = entries
         .into_iter()
@@ -279,27 +281,24 @@ pub fn op_webgpu_create_bind_group(
                 binding: entry.binding,
                 resource: match entry.kind.as_str() {
                     "GPUSampler" => {
-                        let sampler_resource = state
+                        let sampler = state
                             .resource_table
                             .get::<super::sampler::WebGpuSampler>(entry.resource)?;
-                        wgpu_core::binding_model::BindingResource::Sampler(sampler_resource.1)
+                        wgpu_core::binding_model::BindingResource::Sampler(sampler.id)
                     }
                     "GPUTextureView" => {
-                        let texture_view_resource =
-                            state
-                                .resource_table
-                                .get::<super::texture::WebGpuTextureView>(entry.resource)?;
-                        wgpu_core::binding_model::BindingResource::TextureView(
-                            texture_view_resource.1,
-                        )
+                        let texture_view = state
+                            .resource_table
+                            .get::<super::texture::WebGpuTextureView>(entry.resource)?;
+                        wgpu_core::binding_model::BindingResource::TextureView(texture_view.id)
                     }
                     "GPUBufferBinding" => {
-                        let buffer_resource = state
+                        let buffer = state
                             .resource_table
                             .get::<super::buffer::WebGpuBuffer>(entry.resource)?;
                         wgpu_core::binding_model::BindingResource::Buffer(
                             wgpu_core::binding_model::BufferBinding {
-                                buffer_id: buffer_resource.1,
+                                buffer_id: buffer.id,
                                 offset: entry.offset.unwrap_or(0),
                                 size: std::num::NonZeroU64::new(entry.size.unwrap_or(0)),
                             },
@@ -315,13 +314,13 @@ pub fn op_webgpu_create_bind_group(
 
     let descriptor = wgpu_core::binding_model::BindGroupDescriptor {
         label: Some(label),
-        layout: bind_group_layout.1,
+        layout: bind_group_layout.id,
         entries: Cow::from(entries),
     };
 
     gfx_put!(device => instance.device_create_bind_group(
-    device,
-    &descriptor,
-    ()
-  ) => state, WebGpuBindGroup)
+        device.id,
+        &descriptor,
+        ()
+    ) => state, WebGpuBindGroup)
 }

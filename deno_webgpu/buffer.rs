@@ -16,17 +16,19 @@ use wgpu_core::resource::BufferAccessResult;
 use super::error::DomExceptionOperationError;
 use super::error::WebGpuResult;
 
-pub(crate) struct WebGpuBuffer(
-    pub(crate) super::Instance,
-    pub(crate) wgpu_core::id::BufferId,
-);
+pub(crate) struct WebGpuBuffer {
+    pub(crate) instance: super::Instance,
+    pub(crate) id: wgpu_core::id::BufferId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuBuffer {
     fn name(&self) -> Cow<str> {
         "webGPUBuffer".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.buffer_drop(self.1, true));
+        self.core.buffer_drop(&self.instance, self.id, true);
     }
 }
 
@@ -48,10 +50,9 @@ pub fn op_webgpu_create_buffer(
     mapped_at_creation: bool,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(device_rid)?;
-    let device = device_resource.1;
 
     let descriptor = wgpu_core::resource::BufferDescriptor {
         label: Some(label),
@@ -62,7 +63,7 @@ pub fn op_webgpu_create_buffer(
     };
 
     gfx_put!(device => instance.device_create_buffer(
-    device,
+    device.id,
     &descriptor,
     ()
   ) => state, WebGpuBuffer)
@@ -80,35 +81,39 @@ pub async fn op_webgpu_buffer_get_map_async(
 ) -> Result<WebGpuResult, AnyError> {
     let (sender, receiver) = oneshot::channel::<BufferAccessResult>();
 
-    let device;
+    let device_id;
+    let core;
     {
         let state_ = state.borrow();
         let instance = state_.borrow::<super::Instance>();
-        let buffer_resource = state_.resource_table.get::<WebGpuBuffer>(buffer_rid)?;
-        let buffer = buffer_resource.1;
-        let device_resource = state_
+        let buffer = state_.resource_table.get::<WebGpuBuffer>(buffer_rid)?;
+        let device = state_
             .resource_table
             .get::<super::WebGpuDevice>(device_rid)?;
-        device = device_resource.1;
+
+        (device_id, core) = (device.id, device.core);
 
         let callback = Box::new(move |status| {
             sender.send(status).unwrap();
         });
 
         // TODO(lucacasonato): error handling
-        let maybe_err = gfx_select!(buffer => instance.buffer_map_async(
-            buffer,
-            offset..(offset + size),
-            wgpu_core::resource::BufferMapOperation {
-                host: match mode {
-                    1 => wgpu_core::device::HostMap::Read,
-                    2 => wgpu_core::device::HostMap::Write,
-                    _ => unreachable!(),
+        let maybe_err = buffer
+            .core
+            .buffer_map_async(
+                instance,
+                buffer.id,
+                offset..(offset + size),
+                wgpu_core::resource::BufferMapOperation {
+                    host: match mode {
+                        1 => wgpu_core::device::HostMap::Read,
+                        2 => wgpu_core::device::HostMap::Write,
+                        _ => unreachable!(),
+                    },
+                    callback: Some(wgpu_core::resource::BufferMapCallback::from_rust(callback)),
                 },
-                callback: Some(wgpu_core::resource::BufferMapCallback::from_rust(callback)),
-            }
-        ))
-        .err();
+            )
+            .err();
 
         if maybe_err.is_some() {
             return Ok(WebGpuResult::maybe_err(maybe_err));
@@ -122,7 +127,7 @@ pub async fn op_webgpu_buffer_get_map_async(
             {
                 let state = state.borrow();
                 let instance = state.borrow::<super::Instance>();
-                gfx_select!(device => instance.device_poll(device, wgpu_types::Maintain::wait()))
+                core.device_poll(instance, device_id, wgpu_types::Maintain::wait())
                     .unwrap();
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -152,15 +157,12 @@ pub fn op_webgpu_buffer_get_mapped_range(
     #[buffer] buf: &mut [u8],
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let buffer_resource = state.resource_table.get::<WebGpuBuffer>(buffer_rid)?;
-    let buffer = buffer_resource.1;
+    let buffer = state.resource_table.get::<WebGpuBuffer>(buffer_rid)?;
 
-    let (slice_pointer, range_size) = gfx_select!(buffer => instance.buffer_get_mapped_range(
-      buffer,
-      offset,
-      size
-    ))
-    .map_err(|e| DomExceptionOperationError::new(&e.to_string()))?;
+    let (slice_pointer, range_size) = buffer
+        .core
+        .buffer_get_mapped_range(&instance, buffer.id, offset, size)
+        .map_err(|e| DomExceptionOperationError::new(&e.to_string()))?;
 
     let slice = unsafe { std::slice::from_raw_parts_mut(slice_pointer, range_size as usize) };
     buf.copy_from_slice(slice);
@@ -184,13 +186,12 @@ pub fn op_webgpu_buffer_unmap(
         .resource_table
         .take::<WebGpuBufferMapped>(mapped_rid)?;
     let instance = state.borrow::<super::Instance>();
-    let buffer_resource = state.resource_table.get::<WebGpuBuffer>(buffer_rid)?;
-    let buffer = buffer_resource.1;
+    let buffer = state.resource_table.get::<WebGpuBuffer>(buffer_rid)?;
 
     if let Some(buf) = buf {
         let slice = unsafe { std::slice::from_raw_parts_mut(mapped_resource.0, mapped_resource.1) };
         slice.copy_from_slice(buf);
     }
 
-    gfx_ok!(buffer => instance.buffer_unmap(buffer))
+    gfx_ok!(buffer => instance.buffer_unmap(buffer.id))
 }

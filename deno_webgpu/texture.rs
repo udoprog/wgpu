@@ -10,10 +10,12 @@ use std::borrow::Cow;
 use std::rc::Rc;
 
 use super::error::WebGpuResult;
+
 pub(crate) struct WebGpuTexture {
     pub(crate) instance: crate::Instance,
     pub(crate) id: wgpu_core::id::TextureId,
     pub(crate) owned: bool,
+    core: &'static wgpu_core::CoreTable,
 }
 
 impl Resource for WebGpuTexture {
@@ -23,23 +25,26 @@ impl Resource for WebGpuTexture {
 
     fn close(self: Rc<Self>) {
         if self.owned {
-            let instance = &self.instance;
-            gfx_select!(self.id => instance.texture_drop(self.id, true));
+            self.core.texture_drop(&self.instance, self.id, true);
         }
     }
 }
 
-pub(crate) struct WebGpuTextureView(
-    pub(crate) crate::Instance,
-    pub(crate) wgpu_core::id::TextureViewId,
-);
+pub(crate) struct WebGpuTextureView {
+    pub(crate) instance: crate::Instance,
+    pub(crate) id: wgpu_core::id::TextureViewId,
+    pub(crate) core: &'static wgpu_core::CoreTable,
+}
+
 impl Resource for WebGpuTextureView {
     fn name(&self) -> Cow<str> {
         "webGPUTextureView".into()
     }
 
     fn close(self: Rc<Self>) {
-        gfx_select!(self.1 => self.0.texture_view_drop(self.1, true)).unwrap();
+        self.core
+            .texture_view_drop(&self.instance, self.id, true)
+            .unwrap();
     }
 }
 
@@ -64,10 +69,9 @@ pub fn op_webgpu_create_texture(
     #[serde] args: CreateTextureArgs,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let device_resource = state
+    let device = state
         .resource_table
         .get::<super::WebGpuDevice>(args.device_rid)?;
-    let device = device_resource.1;
 
     let descriptor = wgpu_core::resource::TextureDescriptor {
         label: Some(Cow::Owned(args.label)),
@@ -80,16 +84,15 @@ pub fn op_webgpu_create_texture(
         view_formats: args.view_formats,
     };
 
-    let (val, maybe_err) = gfx_select!(device => instance.device_create_texture(
-      device,
-      &descriptor,
-      ()
-    ));
+    let (val, maybe_err) = device
+        .core
+        .device_create_texture(&instance, device.id, &descriptor, ());
 
     let rid = state.resource_table.add(WebGpuTexture {
         instance: instance.clone(),
         id: val,
         owned: true,
+        core: device.core,
     });
 
     Ok(WebGpuResult::rid_err(rid, maybe_err))
@@ -113,10 +116,9 @@ pub fn op_webgpu_create_texture_view(
     #[serde] args: CreateTextureViewArgs,
 ) -> Result<WebGpuResult, AnyError> {
     let instance = state.borrow::<super::Instance>();
-    let texture_resource = state
+    let texture = state
         .resource_table
         .get::<WebGpuTexture>(args.texture_rid)?;
-    let texture = texture_resource.id;
 
     let descriptor = wgpu_core::resource::TextureViewDescriptor {
         label: Some(Cow::Owned(args.label)),
@@ -125,9 +127,11 @@ pub fn op_webgpu_create_texture_view(
         range: args.range,
     };
 
-    gfx_put!(texture => instance.texture_create_view(
-    texture,
-    &descriptor,
-    ()
-  ) => state, WebGpuTextureView)
+    gfx_put! {
+        texture => instance.texture_create_view(
+            texture.id,
+            &descriptor,
+            ()
+        ) => state, WebGpuTextureView
+    }
 }
