@@ -193,7 +193,7 @@ impl Corpus {
             if !corpus.backends.contains(backend.into()) {
                 continue;
             }
-            let adapter = match global.request_adapter(
+            let (adapter, _) = match global.request_adapter(
                 &wgc::instance::RequestAdapterOptions {
                     power_preference: wgt::PowerPreference::None,
                     force_fallback_adapter: false,

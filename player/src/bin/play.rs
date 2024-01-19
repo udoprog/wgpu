@@ -57,7 +57,7 @@ fn main() {
     let mut command_buffer_id_manager = wgc::identity::IdentityManager::new();
 
     #[cfg(feature = "winit")]
-    let surface = unsafe {
+    let (surface, _) = unsafe {
         global.instance_create_surface(
             window.display_handle().unwrap().into(),
             window.window_handle().unwrap().into(),
@@ -69,7 +69,7 @@ fn main() {
     let device = match actions.pop() {
         Some(trace::Action::Init { desc, backend }) => {
             log::info!("Initializing the device for backend: {:?}", backend);
-            let adapter = global
+            let (adapter, _) = global
                 .request_adapter(
                     &wgc::instance::RequestAdapterOptions {
                         power_preference: wgt::PowerPreference::None,

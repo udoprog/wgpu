@@ -80,6 +80,7 @@ pub mod any_surface;
 pub mod binding_model;
 pub mod command;
 mod conv;
+mod core_table;
 pub mod device;
 pub mod error;
 pub mod global;
@@ -98,12 +99,14 @@ pub mod resource;
 mod snatch;
 pub mod storage;
 mod track;
+
 // This is public for users who pre-compile shaders while still wanting to
 // preserve all run-time checks that `wgpu-core` does.
 // See <https://github.com/gfx-rs/wgpu/issues/3103>, after which this can be
 // made private again.
 pub mod validation;
 
+pub use core_table::CoreTable;
 pub use hal::{api, MAX_BIND_GROUPS, MAX_COLOR_ATTACHMENTS, MAX_VERTEX_BUFFERS};
 pub use naga;
 
@@ -226,7 +229,7 @@ platform supports.";
 /// outside this macro. For details:
 /// <https://github.com/rust-lang/rust/pull/52234#issuecomment-976702997>
 macro_rules! define_backend_caller {
-    { $public:ident, $private:ident, $feature:literal if $cfg:meta } => {
+    { $public:ident, $private:ident, $try:ident, $try_private:ident, $feature:literal if $cfg:meta } => {
         #[cfg($cfg)]
         #[macro_export]
         macro_rules! $private {
@@ -241,8 +244,21 @@ macro_rules! define_backend_caller {
             )
         }
 
+        #[cfg($cfg)]
+        #[macro_export]
+        macro_rules! $try_private {
+            ( $call:expr ) => ( Some($call) )
+        }
+
+        #[cfg(not($cfg))]
+        #[macro_export]
+        macro_rules! $try_private {
+            ( $call:expr ) => ( None )
+        }
+
         // See note about rust-lang#52234 above.
         #[doc(hidden)] pub use $private as $public;
+        #[doc(hidden)] pub use $try_private as $try;
     }
 }
 
@@ -252,14 +268,29 @@ macro_rules! define_backend_caller {
 //
 // expands to `expr` if the `"vulkan"` feature is enabled, or to a panic
 // otherwise.
-define_backend_caller! { gfx_if_vulkan, gfx_if_vulkan_hidden, "vulkan" if all(feature = "vulkan", not(target_arch = "wasm32")) }
-define_backend_caller! { gfx_if_metal, gfx_if_metal_hidden, "metal" if all(feature = "metal", any(target_os = "macos", target_os = "ios")) }
-define_backend_caller! { gfx_if_dx12, gfx_if_dx12_hidden, "dx12" if all(feature = "dx12", windows) }
-define_backend_caller! { gfx_if_gles, gfx_if_gles_hidden, "gles" if feature = "gles" }
-define_backend_caller! { gfx_if_empty, gfx_if_empty_hidden, "empty" if all(
-    not(any(feature = "metal", feature = "vulkan", feature = "gles")),
-    any(target_os = "macos", target_os = "ios"),
-) }
+define_backend_caller! {
+    gfx_if_vulkan, gfx_if_vulkan_hidden, gfx_try_if_vulkan, gfx_try_if_vulkan_hidden,
+    "vulkan" if all(feature = "vulkan", not(target_arch = "wasm32"))
+}
+define_backend_caller! {
+    gfx_if_metal, gfx_if_metal_hidden, gfx_try_if_metal, gfx_try_if_metal_hidden,
+    "metal" if all(feature = "metal", any(target_os = "macos", target_os = "ios"))
+}
+define_backend_caller! {
+    gfx_if_dx12, gfx_if_dx12_hidden, gfx_try_if_dx12, gfx_try_if_dx12_hidden,
+    "dx12" if all(feature = "dx12", windows)
+}
+define_backend_caller! {
+    gfx_if_gles, gfx_if_gles_hidden, gfx_try_if_gles, gfx_try_if_gles_hidden,
+    "gles" if feature = "gles"
+}
+define_backend_caller! {
+    gfx_if_empty, gfx_if_empty_hidden, gfx_try_if_empty, gfx_try_if_empty_hidden,
+    "empty" if all(
+        not(any(feature = "metal", feature = "vulkan", feature = "gles")),
+        any(target_os = "macos", target_os = "ios"),
+    )
+}
 
 /// Dispatch on an [`Id`]'s backend to a backend-generic method.
 ///

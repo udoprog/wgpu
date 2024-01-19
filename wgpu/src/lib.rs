@@ -1910,10 +1910,10 @@ impl Instance {
             .map(|ctx| {
                 ctx.enumerate_adapters(backends)
                     .into_iter()
-                    .map(move |id| crate::Adapter {
+                    .map(move |(id, fns)| crate::Adapter {
                         context: Arc::clone(&context),
                         id: ObjectId::from(id),
-                        data: Box::new(()),
+                        data: Box::new(backend::Holder { core: fns }),
                     })
                     .collect()
             })
@@ -1955,12 +1955,13 @@ impl Instance {
                 .downcast_ref::<crate::backend::ContextWgpuCore>()
                 .unwrap()
                 .create_adapter_from_hal(hal_adapter)
-                .into()
         };
         Adapter {
             context,
-            id,
-            data: Box::new(()),
+            id: id.into(),
+            data: Box::new(backend::Holder {
+                core: wgc::CoreTable::new::<A>(),
+            }),
         }
     }
 
@@ -2168,7 +2169,13 @@ impl Adapter {
                 // Part of the safety requirements is that the device was generated from the same adapter.
                 // Therefore, unwrap is fine here since only WgpuCoreContext based adapters have the ability to create hal devices.
                 .unwrap()
-                .create_device_from_hal(&self.id.into(), hal_device, desc, trace_path)
+                .create_device_from_hal(
+                    &self.id.into(),
+                    hal_device,
+                    desc,
+                    trace_path,
+                    wgc::CoreTable::new::<A>(),
+                )
         }
         .map(|(device, queue)| {
             (

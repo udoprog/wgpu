@@ -10,7 +10,7 @@ use crate::{
     identity::{GlobalIdentityHandlerFactory, Input},
     present::Presentation,
     resource::{Resource, ResourceInfo, ResourceType},
-    resource_log, LabelHelpers, DOWNLEVEL_WARNING_MESSAGE,
+    resource_log, CoreTable, LabelHelpers, DOWNLEVEL_WARNING_MESSAGE,
 };
 
 use parking_lot::Mutex;
@@ -479,23 +479,26 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
         id_in: Input<G, SurfaceId>,
-    ) -> Result<SurfaceId, hal::InstanceError> {
+    ) -> Result<(SurfaceId, &'static CoreTable), hal::InstanceError> {
         profiling::scope!("Instance::create_surface");
 
         fn init<A: HalApi>(
             inst: &Option<A::Instance>,
             display_handle: raw_window_handle::RawDisplayHandle,
             window_handle: raw_window_handle::RawWindowHandle,
-        ) -> Option<Result<AnySurface, hal::InstanceError>> {
+        ) -> Option<Result<(AnySurface, &'static CoreTable), hal::InstanceError>> {
             inst.as_ref().map(|inst| unsafe {
-                match inst.create_surface(display_handle, window_handle) {
-                    Ok(raw) => Ok(AnySurface::new(HalSurface::<A> { raw: Arc::new(raw) })),
-                    Err(e) => Err(e),
-                }
+                let surface = match inst.create_surface(display_handle, window_handle) {
+                    Ok(raw) => AnySurface::new(HalSurface::<A> { raw: Arc::new(raw) }),
+                    Err(e) => return Err(e),
+                };
+
+                Ok((surface, CoreTable::new::<A>()))
             })
         }
 
-        let mut hal_surface: Option<Result<AnySurface, hal::InstanceError>> = None;
+        let mut hal_surface: Option<Result<(AnySurface, &'static CoreTable), hal::InstanceError>> =
+            None;
 
         #[cfg(vulkan)]
         if hal_surface.is_none() {
@@ -518,7 +521,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         }
 
         //  This is only None if there's no instance at all.
-        let hal_surface = hal_surface.unwrap()?;
+        let (hal_surface, fns) = hal_surface.unwrap()?;
 
         let surface = Surface {
             presentation: Mutex::new(None),
@@ -527,7 +530,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         };
 
         let (id, _) = self.surfaces.prepare::<G>(id_in).assign(surface);
-        Ok(id)
+        Ok((id, fns))
     }
 
     /// # Safety
@@ -538,7 +541,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         layer: *mut std::ffi::c_void,
         id_in: Input<G, SurfaceId>,
-    ) -> SurfaceId {
+    ) -> (SurfaceId, &'static CoreTable) {
         profiling::scope!("Instance::create_surface_metal");
 
         let surface = Surface {
@@ -562,7 +565,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         };
 
         let (id, _) = self.surfaces.prepare::<G>(id_in).assign(surface);
-        id
+        (id, CoreTable::new::<hal::api::Metal>())
     }
 
     #[cfg(dx12)]
@@ -573,7 +576,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         visual: *mut std::ffi::c_void,
         id_in: Input<G, SurfaceId>,
-    ) -> SurfaceId {
+    ) -> (SurfaceId, &'static CoreTable) {
         profiling::scope!("Instance::instance_create_surface_from_visual");
 
         let surface = Surface {
@@ -593,7 +596,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         };
 
         let (id, _) = self.surfaces.prepare::<G>(id_in).assign(surface);
-        id
+        (id, CoreTable::new::<hal::api::Dx12>())
     }
 
     #[cfg(dx12)]
@@ -604,7 +607,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         surface_handle: *mut std::ffi::c_void,
         id_in: Input<G, SurfaceId>,
-    ) -> SurfaceId {
+    ) -> (SurfaceId, &'static CoreTable) {
         profiling::scope!("Instance::instance_create_surface_from_surface_handle");
 
         let surface = Surface {
@@ -626,7 +629,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         };
 
         let (id, _) = self.surfaces.prepare::<G>(id_in).assign(surface);
-        id
+        (id, CoreTable::new::<hal::api::Dx12>())
     }
 
     #[cfg(dx12)]
@@ -637,7 +640,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         swap_chain_panel: *mut std::ffi::c_void,
         id_in: Input<G, SurfaceId>,
-    ) -> SurfaceId {
+    ) -> (SurfaceId, &'static CoreTable) {
         profiling::scope!("Instance::instance_create_surface_from_swap_chain_panel");
 
         let surface = Surface {
@@ -659,7 +662,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         };
 
         let (id, _) = self.surfaces.prepare::<G>(id_in).assign(surface);
-        id
+        (id, CoreTable::new::<hal::api::Dx12>())
     }
 
     pub fn surface_drop(&self, id: SurfaceId) {
@@ -704,7 +707,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         _: A,
         instance: &Option<A::Instance>,
         inputs: &AdapterInputs<Input<G, AdapterId>>,
-        list: &mut Vec<AdapterId>,
+        list: &mut Vec<(AdapterId, &'static CoreTable)>,
     ) {
         let inst = match *instance {
             Some(ref inst) => inst,
@@ -723,11 +726,14 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             let adapter = Adapter::new(raw);
             log::info!("Adapter {:?} {:?}", A::VARIANT, adapter.raw.info);
             let (id, _) = hub.adapters.prepare::<G>(id_backend).assign(adapter);
-            list.push(id);
+            list.push((id, CoreTable::new::<A>()));
         }
     }
 
-    pub fn enumerate_adapters(&self, inputs: AdapterInputs<Input<G, AdapterId>>) -> Vec<AdapterId> {
+    pub fn enumerate_adapters(
+        &self,
+        inputs: AdapterInputs<Input<G, AdapterId>>,
+    ) -> Vec<(AdapterId, &'static CoreTable)> {
         profiling::scope!("Instance::enumerate_adapters");
         api_log!("Instance::enumerate_adapters");
 
@@ -760,7 +766,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         selected: &mut usize,
         new_id: Option<Input<G, AdapterId>>,
         mut list: Vec<hal::ExposedAdapter<A>>,
-    ) -> Option<AdapterId> {
+    ) -> Option<(AdapterId, &'static CoreTable)> {
         match selected.checked_sub(list.len()) {
             Some(left) => {
                 *selected = left;
@@ -773,7 +779,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                     .adapters
                     .prepare::<G>(new_id.unwrap())
                     .assign(adapter);
-                Some(id)
+                Some((id, CoreTable::new::<A>()))
             }
         }
     }
@@ -782,7 +788,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         desc: &RequestAdapterOptions,
         inputs: AdapterInputs<Input<G, AdapterId>>,
-    ) -> Result<AdapterId, RequestAdapterError> {
+    ) -> Result<(AdapterId, &'static CoreTable), RequestAdapterError> {
         profiling::scope!("Instance::request_adapter");
         api_log!("Instance::request_adapter");
 
@@ -920,20 +926,20 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         let mut selected = preferred_gpu.unwrap_or(0);
         #[cfg(vulkan)]
-        if let Some(id) = self.select(&mut selected, id_vulkan, adapters_vk) {
-            return Ok(id);
+        if let Some((id, fns)) = self.select(&mut selected, id_vulkan, adapters_vk) {
+            return Ok((id, fns));
         }
         #[cfg(metal)]
-        if let Some(id) = self.select(&mut selected, id_metal, adapters_metal) {
-            return Ok(id);
+        if let Some((id, fns)) = self.select(&mut selected, id_metal, adapters_metal) {
+            return Ok((id, fns));
         }
         #[cfg(dx12)]
-        if let Some(id) = self.select(&mut selected, id_dx12, adapters_dx12) {
-            return Ok(id);
+        if let Some((id, fns)) = self.select(&mut selected, id_dx12, adapters_dx12) {
+            return Ok((id, fns));
         }
         #[cfg(gles)]
-        if let Some(id) = self.select(&mut selected, id_gl, adapters_gl) {
-            return Ok(id);
+        if let Some((id, fns)) = self.select(&mut selected, id_gl, adapters_gl) {
+            return Ok((id, fns));
         }
         let _ = selected;
 
