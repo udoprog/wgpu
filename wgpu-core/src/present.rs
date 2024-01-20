@@ -24,9 +24,9 @@ use crate::{
     hal_api::HalApi,
     hal_label,
     id::{SurfaceId, TextureId},
-    identity::{GlobalIdentityHandlerFactory, Input},
+    identity::IdentityHandlerFactory,
     init_tracker::TextureInitTracker,
-    resource::{self, ResourceInfo},
+    resource::{self, ResourceInfo, Texture},
     snatch::Snatchable,
     track,
 };
@@ -121,11 +121,11 @@ pub struct SurfaceOutput {
     pub texture_id: Option<TextureId>,
 }
 
-impl<G: GlobalIdentityHandlerFactory> Global<G> {
+impl<G: IdentityHandlerFactory> Global<G> {
     pub fn surface_get_current_texture<A: HalApi>(
         &self,
         surface_id: SurfaceId,
-        texture_id_in: Input<G, TextureId>,
+        texture_id_in: G::Input,
     ) -> Result<SurfaceOutput, SurfaceError> {
         profiling::scope!("SwapChain::get_next_texture");
 
@@ -212,7 +212,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
                 let mut presentation = surface.presentation.lock();
                 let present = presentation.as_mut().unwrap();
-                let texture = resource::Texture {
+                let texture = Texture {
                     inner: Snatchable::new(resource::TextureInner::Surface {
                         raw: Some(ast.texture),
                         parent_id: surface_id,

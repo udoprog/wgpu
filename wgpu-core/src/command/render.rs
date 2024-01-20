@@ -19,7 +19,7 @@ use crate::{
     global::Global,
     hal_api::HalApi,
     hal_label, id,
-    identity::GlobalIdentityHandlerFactory,
+    identity::IdentityHandlerFactory,
     init_tracker::{MemoryInitKind, TextureInitRange, TextureInitTrackerAction},
     pipeline::{self, PipelineFlags},
     resource::{Buffer, QuerySet, Texture, TextureView, TextureViewNotRenderableReason},
@@ -785,10 +785,10 @@ impl<'a, A: HalApi> RenderPassInfo<'a, A> {
         trackers: &mut Tracker<A>,
         texture_memory_actions: &mut CommandBufferTextureMemoryActions<A>,
         pending_query_resets: &mut QueryResetMap<A>,
-        view_guard: &'a Storage<TextureView<A>, id::TextureViewId>,
-        buffer_guard: &'a Storage<Buffer<A>, id::BufferId>,
-        texture_guard: &'a Storage<Texture<A>, id::TextureId>,
-        query_set_guard: &'a Storage<QuerySet<A>, id::QuerySetId>,
+        view_guard: &'a Storage<TextureView<A>>,
+        buffer_guard: &'a Storage<Buffer<A>>,
+        texture_guard: &'a Storage<Texture<A>>,
+        query_set_guard: &'a Storage<QuerySet<A>>,
     ) -> Result<Self, RenderPassErrorInner> {
         profiling::scope!("RenderPassInfo::start");
 
@@ -1279,7 +1279,7 @@ impl<'a, A: HalApi> RenderPassInfo<'a, A> {
 
 // Common routines between render/compute
 
-impl<G: GlobalIdentityHandlerFactory> Global<G> {
+impl<G: IdentityHandlerFactory> Global<G> {
     pub fn command_encoder_run_render_pass<A: HalApi>(
         &self,
         encoder_id: id::CommandEncoderId,
@@ -2372,7 +2372,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             (trackers, pending_discard_init_fixups)
         };
 
-        let cmd_buf = hub.command_buffers.get(encoder_id).unwrap();
+        let cmd_buf = hub.command_buffers.get(encoder_id.transmute()).unwrap();
         let mut cmd_buf_data = cmd_buf.data.lock();
         let cmd_buf_data = cmd_buf_data.as_mut().unwrap();
 

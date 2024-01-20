@@ -24,7 +24,6 @@ use std::{
 };
 use wgc::command::{bundle_ffi::*, compute_ffi::*, render_ffi::*};
 use wgc::device::DeviceLostClosure;
-use wgc::id::TypedId;
 use wgt::WasmNotSendSync;
 
 const LABEL: &str = "label";
@@ -47,13 +46,7 @@ impl fmt::Debug for ContextWgpuCore {
 
 impl ContextWgpuCore {
     pub unsafe fn from_hal_instance<A: wgc::hal_api::HalApi>(hal_instance: A::Instance) -> Self {
-        Self(unsafe {
-            wgc::global::Global::from_hal_instance::<A>(
-                "wgpu",
-                wgc::identity::IdentityManagerFactory,
-                hal_instance,
-            )
-        })
+        Self(unsafe { wgc::global::Global::from_hal_instance::<A>("wgpu", hal_instance) })
     }
 
     /// # Safety
@@ -64,9 +57,7 @@ impl ContextWgpuCore {
     }
 
     pub unsafe fn from_core_instance(core_instance: wgc::instance::Instance) -> Self {
-        Self(unsafe {
-            wgc::global::Global::from_instance(wgc::identity::IdentityManagerFactory, core_instance)
-        })
+        Self(unsafe { wgc::global::Global::from_instance(core_instance) })
     }
 
     pub(crate) fn global(&self) -> &wgc::global::Global<wgc::identity::IdentityManagerFactory> {
@@ -510,11 +501,7 @@ impl crate::Context for ContextWgpuCore {
     type PopErrorScopeFuture = Ready<Option<crate::Error>>;
 
     fn init(instance_desc: wgt::InstanceDescriptor) -> Self {
-        Self(wgc::global::Global::new(
-            "wgpu",
-            wgc::identity::IdentityManagerFactory,
-            instance_desc,
-        ))
+        Self(wgc::global::Global::new("wgpu", instance_desc))
     }
 
     unsafe fn instance_create_surface(
@@ -604,7 +591,7 @@ impl crate::Context for ContextWgpuCore {
             id: queue_id,
             error_sink,
         };
-        ready(Ok((device_id, device, device_id, queue)))
+        ready(Ok((device_id, device, device_id.transmute(), queue)))
     }
 
     fn instance_poll_all_devices(&self, force_wait: bool) -> bool {
@@ -1814,7 +1801,8 @@ impl crate::Context for ContextWgpuCore {
         if let Err(cause) = wgc::gfx_select!(
             encoder => self.0.command_encoder_run_compute_pass(*encoder, pass_data)
         ) {
-            let name = wgc::gfx_select!(encoder => self.0.command_buffer_label(*encoder));
+            let name =
+                wgc::gfx_select!(encoder => self.0.command_buffer_label(encoder.transmute()));
             self.handle_error(
                 &encoder_data.error_sink,
                 cause,
@@ -1897,7 +1885,8 @@ impl crate::Context for ContextWgpuCore {
         if let Err(cause) =
             wgc::gfx_select!(encoder => self.0.command_encoder_run_render_pass(*encoder, pass_data))
         {
-            let name = wgc::gfx_select!(encoder => self.0.command_buffer_label(*encoder));
+            let name =
+                wgc::gfx_select!(encoder => self.0.command_buffer_label(encoder.transmute()));
             self.handle_error(
                 &encoder_data.error_sink,
                 cause,
@@ -2931,22 +2920,21 @@ impl crate::Context for ContextWgpuCore {
 
 impl<T> From<ObjectId> for wgc::id::Id<T>
 where
-    T: 'static + WasmNotSendSync,
+    T: wgc::id::Marker,
 {
     fn from(id: ObjectId) -> Self {
-        let id = id.id();
+        let id = wgc::id::RawId::from_non_zero(id.id());
         // SAFETY: The id was created via the impl below
-        unsafe { Self::from_raw(id) }
+        unsafe { wgc::id::Id::from_raw(id) }
     }
 }
 
 impl<T> From<wgc::id::Id<T>> for ObjectId
 where
-    T: 'static + WasmNotSendSync,
+    T: wgc::id::Marker,
 {
     fn from(id: wgc::id::Id<T>) -> Self {
-        let id = id.into_raw();
-        Self::from_global_id(id)
+        Self::from_global_id(id.into_raw())
     }
 }
 

@@ -1039,10 +1039,10 @@ impl ObjectId {
     }
 
     #[allow(dead_code)]
-    pub fn from_global_id(global_id: NonZeroU64) -> Self {
+    pub fn from_global_id(global_id: wgc::id::RawId) -> Self {
         Self {
-            id: Some(global_id),
-            global_id: Some(global_id),
+            id: Some(global_id.into_non_zero()),
+            global_id: Some(global_id.into_non_zero()),
         }
     }
 

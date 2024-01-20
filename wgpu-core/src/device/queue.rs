@@ -13,7 +13,7 @@ use crate::{
     hal_api::HalApi,
     hal_label,
     id::{self, QueueId},
-    identity::{GlobalIdentityHandlerFactory, Input},
+    identity::IdentityHandlerFactory,
     init_tracker::{has_copy_partial_init_tracker_coverage, TextureInitRange},
     resource::{
         Buffer, BufferAccessError, BufferMapState, DestroyedBuffer, DestroyedTexture, Resource,
@@ -36,17 +36,19 @@ use super::Device;
 pub struct Queue<A: HalApi> {
     pub device: Option<Arc<Device<A>>>,
     pub raw: Option<A::Queue>,
-    pub info: ResourceInfo<QueueId>,
+    pub info: ResourceInfo<<Self as Resource>::Marker>,
 }
 
-impl<A: HalApi> Resource<QueueId> for Queue<A> {
+impl<A: HalApi> Resource for Queue<A> {
+    type Marker = crate::id::markers::Queue;
+
     const TYPE: ResourceType = "Queue";
 
-    fn as_info(&self) -> &ResourceInfo<QueueId> {
+    fn as_info(&self) -> &ResourceInfo<Self::Marker> {
         &self.info
     }
 
-    fn as_info_mut(&mut self) -> &mut ResourceInfo<QueueId> {
+    fn as_info_mut(&mut self) -> &mut ResourceInfo<Self::Marker> {
         &mut self.info
     }
 }
@@ -361,7 +363,7 @@ pub enum QueueSubmitError {
 
 //TODO: move out common parts of write_xxx.
 
-impl<G: GlobalIdentityHandlerFactory> Global<G> {
+impl<G: IdentityHandlerFactory> Global<G> {
     pub fn queue_write_buffer<A: HalApi>(
         &self,
         queue_id: QueueId,
@@ -435,7 +437,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         queue_id: QueueId,
         buffer_size: wgt::BufferSize,
-        id_in: Input<G, id::StagingBufferId>,
+        id_in: G::Input,
     ) -> Result<(id::StagingBufferId, *mut u8), QueueWriteError> {
         profiling::scope!("Queue::create_staging_buffer");
         let hub = A::hub(self);
@@ -668,7 +670,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             .get(destination.texture)
             .map_err(|_| TransferError::InvalidTexture(destination.texture))?;
 
-        if dst.device.as_info().id() != queue_id {
+        if dst.device.as_info().id() != queue_id.transmute() {
             return Err(DeviceError::WrongDevice.into());
         }
 
@@ -1146,7 +1148,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
                             Err(_) => continue,
                         };
 
-                        if cmdbuf.device.as_info().id() != queue_id {
+                        if cmdbuf.device.as_info().id() != queue_id.transmute() {
                             return Err(DeviceError::WrongDevice.into());
                         }
 

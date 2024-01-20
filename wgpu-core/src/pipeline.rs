@@ -5,7 +5,7 @@ use crate::{
     command::ColorAttachmentError,
     device::{Device, DeviceError, MissingDownlevelFlags, MissingFeatures, RenderPassContext},
     hal_api::HalApi,
-    id::{ComputePipelineId, PipelineLayoutId, RenderPipelineId, ShaderModuleId},
+    id::{PipelineLayoutId, ShaderModuleId},
     resource::{Resource, ResourceInfo, ResourceType},
     resource_log, validation, Label,
 };
@@ -47,7 +47,7 @@ pub struct ShaderModule<A: HalApi> {
     pub(crate) raw: Option<A::ShaderModule>,
     pub(crate) device: Arc<Device<A>>,
     pub(crate) interface: Option<validation::Interface>,
-    pub(crate) info: ResourceInfo<ShaderModuleId>,
+    pub(crate) info: ResourceInfo<<Self as Resource>::Marker>,
     pub(crate) label: String,
 }
 
@@ -67,14 +67,16 @@ impl<A: HalApi> Drop for ShaderModule<A> {
     }
 }
 
-impl<A: HalApi> Resource<ShaderModuleId> for ShaderModule<A> {
+impl<A: HalApi> Resource for ShaderModule<A> {
+    type Marker = crate::id::markers::ShaderModule;
+
     const TYPE: ResourceType = "ShaderModule";
 
-    fn as_info(&self) -> &ResourceInfo<ShaderModuleId> {
+    fn as_info(&self) -> &ResourceInfo<Self::Marker> {
         &self.info
     }
 
-    fn as_info_mut(&mut self) -> &mut ResourceInfo<ShaderModuleId> {
+    fn as_info_mut(&mut self) -> &mut ResourceInfo<Self::Marker> {
         &mut self.info
     }
 
@@ -244,7 +246,7 @@ pub struct ComputePipeline<A: HalApi> {
     pub(crate) device: Arc<Device<A>>,
     pub(crate) _shader_module: Arc<ShaderModule<A>>,
     pub(crate) late_sized_buffer_groups: ArrayVec<LateSizedBufferGroup, { hal::MAX_BIND_GROUPS }>,
-    pub(crate) info: ResourceInfo<ComputePipelineId>,
+    pub(crate) info: ResourceInfo<<Self as Resource>::Marker>,
 }
 
 impl<A: HalApi> Drop for ComputePipeline<A> {
@@ -265,14 +267,16 @@ impl<A: HalApi> Drop for ComputePipeline<A> {
     }
 }
 
-impl<A: HalApi> Resource<ComputePipelineId> for ComputePipeline<A> {
+impl<A: HalApi> Resource for ComputePipeline<A> {
+    type Marker = crate::id::markers::ComputePipeline;
+
     const TYPE: ResourceType = "ComputePipeline";
 
-    fn as_info(&self) -> &ResourceInfo<ComputePipelineId> {
+    fn as_info(&self) -> &ResourceInfo<Self::Marker> {
         &self.info
     }
 
-    fn as_info_mut(&mut self) -> &mut ResourceInfo<ComputePipelineId> {
+    fn as_info_mut(&mut self) -> &mut ResourceInfo<Self::Marker> {
         &mut self.info
     }
 }
@@ -492,7 +496,7 @@ pub struct RenderPipeline<A: HalApi> {
     pub(crate) strip_index_format: Option<wgt::IndexFormat>,
     pub(crate) vertex_steps: Vec<VertexStep>,
     pub(crate) late_sized_buffer_groups: ArrayVec<LateSizedBufferGroup, { hal::MAX_BIND_GROUPS }>,
-    pub(crate) info: ResourceInfo<RenderPipelineId>,
+    pub(crate) info: ResourceInfo<<Self as Resource>::Marker>,
 }
 
 impl<A: HalApi> Drop for RenderPipeline<A> {
@@ -513,14 +517,16 @@ impl<A: HalApi> Drop for RenderPipeline<A> {
     }
 }
 
-impl<A: HalApi> Resource<RenderPipelineId> for RenderPipeline<A> {
+impl<A: HalApi> Resource for RenderPipeline<A> {
+    type Marker = crate::id::markers::RenderPipeline;
+
     const TYPE: ResourceType = "RenderPipeline";
 
-    fn as_info(&self) -> &ResourceInfo<RenderPipelineId> {
+    fn as_info(&self) -> &ResourceInfo<Self::Marker> {
         &self.info
     }
 
-    fn as_info_mut(&mut self) -> &mut ResourceInfo<RenderPipelineId> {
+    fn as_info_mut(&mut self) -> &mut ResourceInfo<Self::Marker> {
         &mut self.info
     }
 }

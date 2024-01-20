@@ -18,7 +18,7 @@ use crate::{
     hal_api::HalApi,
     hal_label, id,
     id::DeviceId,
-    identity::GlobalIdentityHandlerFactory,
+    identity::IdentityHandlerFactory,
     init_tracker::MemoryInitKind,
     pipeline,
     resource::{self},
@@ -313,7 +313,7 @@ impl<A: HalApi> State<A> {
         &mut self,
         raw_encoder: &mut A::CommandEncoder,
         base_trackers: &mut Tracker<A>,
-        bind_group_guard: &Storage<BindGroup<A>, id::BindGroupId>,
+        bind_group_guard: &Storage<BindGroup<A>>,
         indirect_buffer: Option<id::BufferId>,
         snatch_guard: &SnatchGuard,
     ) -> Result<(), UsageConflict> {
@@ -348,7 +348,7 @@ impl<A: HalApi> State<A> {
 
 // Common routines between render/compute
 
-impl<G: GlobalIdentityHandlerFactory> Global<G> {
+impl<G: IdentityHandlerFactory> Global<G> {
     pub fn command_encoder_run_compute_pass<A: HalApi>(
         &self,
         encoder_id: id::CommandEncoderId,

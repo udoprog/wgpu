@@ -3,7 +3,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    use player::{GlobalPlay as _, IdentityPassThroughFactory};
+    use player::GlobalPlay as _;
     use wgc::{device::trace, gfx_select};
 
     use std::{
@@ -49,11 +49,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let global = wgc::global::Global::new(
-        "player",
-        IdentityPassThroughFactory,
-        wgt::InstanceDescriptor::default(),
-    );
+    let global = wgc::global::Global::new("player", wgt::InstanceDescriptor::default());
     let mut command_buffer_id_manager = wgc::identity::IdentityManager::new();
 
     #[cfg(feature = "winit")]
@@ -61,7 +57,7 @@ fn main() {
         global.instance_create_surface(
             window.display_handle().unwrap().into(),
             window.window_handle().unwrap().into(),
-            wgc::id::TypedId::zip(0, 1, wgt::Backend::Empty),
+            wgc::id::RawId::zip(0, 1, wgt::Backend::Empty),
         )
     }
     .unwrap();
@@ -80,7 +76,7 @@ fn main() {
                         compatible_surface: None,
                     },
                     wgc::instance::AdapterInputs::IdSet(
-                        &[wgc::id::TypedId::zip(0, 0, backend)],
+                        &[wgc::id::RawId::zip(0, 0, backend)],
                         |id| id.backend(),
                     ),
                 )
@@ -88,13 +84,13 @@ fn main() {
 
             let info = gfx_select!(adapter => global.adapter_get_info(adapter)).unwrap();
             log::info!("Picked '{}'", info.name);
-            let id = wgc::id::TypedId::zip(1, 0, backend);
+            let id = wgc::id::Id::zip(1, 0, backend);
             let (_, _, error) = gfx_select!(adapter => global.adapter_request_device(
                 adapter,
                 &desc,
                 None,
-                id,
-                id
+                id.into_raw(),
+                id.into_raw()
             ));
             if let Some(e) = error {
                 panic!("{:?}", e);

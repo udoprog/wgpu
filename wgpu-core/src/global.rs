@@ -5,8 +5,7 @@ use wgt::Backend;
 use crate::{
     hal_api::HalApi,
     hub::{HubReport, Hubs},
-    id::SurfaceId,
-    identity::GlobalIdentityHandlerFactory,
+    identity::IdentityHandlerFactory,
     instance::{Instance, Surface},
     registry::{Registry, RegistryReport},
     resource_log,
@@ -45,20 +44,20 @@ impl GlobalReport {
     }
 }
 
-pub struct Global<G: GlobalIdentityHandlerFactory> {
+pub struct Global<G: IdentityHandlerFactory> {
     pub instance: Instance,
-    pub surfaces: Registry<SurfaceId, Surface>,
+    pub surfaces: Registry<Surface>,
     pub(crate) hubs: Hubs,
     _phantom: PhantomData<G>,
 }
 
-impl<G: GlobalIdentityHandlerFactory> Global<G> {
-    pub fn new(name: &str, factory: G, instance_desc: wgt::InstanceDescriptor) -> Self {
+impl<G: IdentityHandlerFactory> Global<G> {
+    pub fn new(name: &str, instance_desc: wgt::InstanceDescriptor) -> Self {
         profiling::scope!("Global::new");
         Self {
             instance: Instance::new(name, instance_desc),
-            surfaces: Registry::without_backend(&factory),
-            hubs: Hubs::new(&factory),
+            surfaces: Registry::without_backend(),
+            hubs: Hubs::new(),
             _phantom: PhantomData,
         }
     }
@@ -66,16 +65,12 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     /// # Safety
     ///
     /// Refer to the creation of wgpu-hal Instance for every backend.
-    pub unsafe fn from_hal_instance<A: HalApi>(
-        name: &str,
-        factory: G,
-        hal_instance: A::Instance,
-    ) -> Self {
+    pub unsafe fn from_hal_instance<A: HalApi>(name: &str, hal_instance: A::Instance) -> Self {
         profiling::scope!("Global::new");
         Self {
             instance: A::create_instance_from_hal(name, hal_instance),
-            surfaces: Registry::without_backend(&factory),
-            hubs: Hubs::new(&factory),
+            surfaces: Registry::without_backend(),
+            hubs: Hubs::new(),
             _phantom: PhantomData,
         }
     }
@@ -90,12 +85,12 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     /// # Safety
     ///
     /// - The raw handles obtained from the Instance must not be manually destroyed
-    pub unsafe fn from_instance(factory: G, instance: Instance) -> Self {
+    pub unsafe fn from_instance(instance: Instance) -> Self {
         profiling::scope!("Global::new");
         Self {
             instance,
-            surfaces: Registry::without_backend(&factory),
-            hubs: Hubs::new(&factory),
+            surfaces: Registry::without_backend(),
+            hubs: Hubs::new(),
             _phantom: PhantomData,
         }
     }
@@ -138,7 +133,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     }
 }
 
-impl<G: GlobalIdentityHandlerFactory> Drop for Global<G> {
+impl<G: IdentityHandlerFactory> Drop for Global<G> {
     fn drop(&mut self) {
         profiling::scope!("Global::drop");
         resource_log!("Global::drop");

@@ -7,7 +7,7 @@ use crate::{
     global::Global,
     hal_api::HalApi,
     id::{AdapterId, DeviceId, QueueId, SurfaceId},
-    identity::{GlobalIdentityHandlerFactory, Input},
+    identity::IdentityHandlerFactory,
     present::Presentation,
     resource::{Resource, ResourceInfo, ResourceType},
     resource_log, LabelHelpers, DOWNLEVEL_WARNING_MESSAGE,
@@ -149,18 +149,20 @@ impl Instance {
 
 pub struct Surface {
     pub(crate) presentation: Mutex<Option<Presentation>>,
-    pub(crate) info: ResourceInfo<SurfaceId>,
+    pub(crate) info: ResourceInfo<<Self as Resource>::Marker>,
     pub(crate) raw: AnySurface,
 }
 
-impl Resource<SurfaceId> for Surface {
+impl Resource for Surface {
+    type Marker = crate::id::markers::Surface;
+
     const TYPE: ResourceType = "Surface";
 
-    fn as_info(&self) -> &ResourceInfo<SurfaceId> {
+    fn as_info(&self) -> &ResourceInfo<Self::Marker> {
         &self.info
     }
 
-    fn as_info_mut(&mut self) -> &mut ResourceInfo<SurfaceId> {
+    fn as_info_mut(&mut self) -> &mut ResourceInfo<Self::Marker> {
         &mut self.info
     }
 
@@ -190,7 +192,7 @@ impl Surface {
 
 pub struct Adapter<A: HalApi> {
     pub(crate) raw: hal::ExposedAdapter<A>,
-    pub(crate) info: ResourceInfo<AdapterId>,
+    pub(crate) info: ResourceInfo<<Self as Resource>::Marker>,
 }
 
 impl<A: HalApi> Adapter<A> {
@@ -382,14 +384,16 @@ impl<A: HalApi> Adapter<A> {
     }
 }
 
-impl<A: HalApi> Resource<AdapterId> for Adapter<A> {
+impl<A: HalApi> Resource for Adapter<A> {
+    type Marker = crate::id::markers::Adapter;
+
     const TYPE: ResourceType = "Adapter";
 
-    fn as_info(&self) -> &ResourceInfo<AdapterId> {
+    fn as_info(&self) -> &ResourceInfo<Self::Marker> {
         &self.info
     }
 
-    fn as_info_mut(&mut self) -> &mut ResourceInfo<AdapterId> {
+    fn as_info_mut(&mut self) -> &mut ResourceInfo<Self::Marker> {
         &mut self.info
     }
 }
@@ -467,7 +471,7 @@ pub enum RequestAdapterError {
     InvalidSurface(SurfaceId),
 }
 
-impl<G: GlobalIdentityHandlerFactory> Global<G> {
+impl<G: IdentityHandlerFactory> Global<G> {
     /// # Safety
     ///
     /// - `display_handle` must be a valid object to create a surface upon.
@@ -478,7 +482,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         display_handle: raw_window_handle::RawDisplayHandle,
         window_handle: raw_window_handle::RawWindowHandle,
-        id_in: Input<G, SurfaceId>,
+        id_in: G::Input,
     ) -> Result<SurfaceId, hal::InstanceError> {
         profiling::scope!("Instance::create_surface");
 
@@ -572,7 +576,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     pub unsafe fn instance_create_surface_from_visual(
         &self,
         visual: *mut std::ffi::c_void,
-        id_in: Input<G, SurfaceId>,
+        id_in: G::Input,
     ) -> SurfaceId {
         profiling::scope!("Instance::instance_create_surface_from_visual");
 
@@ -603,7 +607,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     pub unsafe fn instance_create_surface_from_surface_handle(
         &self,
         surface_handle: *mut std::ffi::c_void,
-        id_in: Input<G, SurfaceId>,
+        id_in: G::Input,
     ) -> SurfaceId {
         profiling::scope!("Instance::instance_create_surface_from_surface_handle");
 
@@ -636,7 +640,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     pub unsafe fn instance_create_surface_from_swap_chain_panel(
         &self,
         swap_chain_panel: *mut std::ffi::c_void,
-        id_in: Input<G, SurfaceId>,
+        id_in: G::Input,
     ) -> SurfaceId {
         profiling::scope!("Instance::instance_create_surface_from_swap_chain_panel");
 
@@ -667,7 +671,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
 
         api_log!("Surface::drop {id:?}");
 
-        fn unconfigure<G: GlobalIdentityHandlerFactory, A: HalApi>(
+        fn unconfigure<G: IdentityHandlerFactory, A: HalApi>(
             global: &Global<G>,
             surface: &AnySurface,
             present: &Presentation,
@@ -703,7 +707,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         _: A,
         instance: &Option<A::Instance>,
-        inputs: &AdapterInputs<Input<G, AdapterId>>,
+        inputs: &AdapterInputs<G::Input>,
         list: &mut Vec<AdapterId>,
     ) {
         let inst = match *instance {
@@ -727,7 +731,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         }
     }
 
-    pub fn enumerate_adapters(&self, inputs: AdapterInputs<Input<G, AdapterId>>) -> Vec<AdapterId> {
+    pub fn enumerate_adapters(&self, inputs: AdapterInputs<G::Input>) -> Vec<AdapterId> {
         profiling::scope!("Instance::enumerate_adapters");
         api_log!("Instance::enumerate_adapters");
 
@@ -758,7 +762,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     fn select<A: HalApi>(
         &self,
         selected: &mut usize,
-        new_id: Option<Input<G, AdapterId>>,
+        new_id: Option<G::Input>,
         mut list: Vec<hal::ExposedAdapter<A>>,
     ) -> Option<AdapterId> {
         match selected.checked_sub(list.len()) {
@@ -781,7 +785,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     pub fn request_adapter(
         &self,
         desc: &RequestAdapterOptions,
-        inputs: AdapterInputs<Input<G, AdapterId>>,
+        inputs: AdapterInputs<G::Input>,
     ) -> Result<AdapterId, RequestAdapterError> {
         profiling::scope!("Instance::request_adapter");
         api_log!("Instance::request_adapter");
@@ -947,24 +951,23 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     pub unsafe fn create_adapter_from_hal<A: HalApi>(
         &self,
         hal_adapter: hal::ExposedAdapter<A>,
-        input: Input<G, AdapterId>,
+        input: G::Input,
     ) -> AdapterId {
         profiling::scope!("Instance::create_adapter_from_hal");
 
         let fid = A::hub(self).adapters.prepare::<G>(input);
 
-        let (id, _adapter): (crate::id::Id<Adapter<hal::empty::Api>>, Arc<Adapter<A>>) =
-            match A::VARIANT {
-                #[cfg(vulkan)]
-                Backend::Vulkan => fid.assign(Adapter::new(hal_adapter)),
-                #[cfg(metal)]
-                Backend::Metal => fid.assign(Adapter::new(hal_adapter)),
-                #[cfg(dx12)]
-                Backend::Dx12 => fid.assign(Adapter::new(hal_adapter)),
-                #[cfg(gles)]
-                Backend::Gl => fid.assign(Adapter::new(hal_adapter)),
-                _ => unreachable!(),
-            };
+        let (id, _adapter): (AdapterId, Arc<Adapter<A>>) = match A::VARIANT {
+            #[cfg(vulkan)]
+            Backend::Vulkan => fid.assign(Adapter::new(hal_adapter)),
+            #[cfg(metal)]
+            Backend::Metal => fid.assign(Adapter::new(hal_adapter)),
+            #[cfg(dx12)]
+            Backend::Dx12 => fid.assign(Adapter::new(hal_adapter)),
+            #[cfg(gles)]
+            Backend::Gl => fid.assign(Adapter::new(hal_adapter)),
+            _ => unreachable!(),
+        };
         resource_log!("Created Adapter {:?}", id);
         id
     }
@@ -1059,14 +1062,14 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
     }
 }
 
-impl<G: GlobalIdentityHandlerFactory> Global<G> {
+impl<G: IdentityHandlerFactory> Global<G> {
     pub fn adapter_request_device<A: HalApi>(
         &self,
         adapter_id: AdapterId,
         desc: &DeviceDescriptor,
         trace_path: Option<&std::path::Path>,
-        device_id_in: Input<G, DeviceId>,
-        queue_id_in: Input<G, QueueId>,
+        device_id_in: G::Input,
+        queue_id_in: G::Input,
     ) -> (DeviceId, QueueId, Option<RequestDeviceError>) {
         profiling::scope!("Adapter::request_device");
         api_log!("Adapter::request_device");
@@ -1114,8 +1117,8 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         hal_device: OpenDevice<A>,
         desc: &DeviceDescriptor,
         trace_path: Option<&std::path::Path>,
-        device_id_in: Input<G, DeviceId>,
-        queue_id_in: Input<G, QueueId>,
+        device_id_in: G::Input,
+        queue_id_in: G::Input,
     ) -> (DeviceId, QueueId, Option<RequestDeviceError>) {
         profiling::scope!("Global::create_device_from_hal");
 

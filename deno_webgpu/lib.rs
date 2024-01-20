@@ -408,9 +408,10 @@ pub async fn op_webgpu_request_adapter(
     let instance = if let Some(instance) = state.try_borrow::<Instance>() {
         instance
     } else {
-        state.put(std::sync::Arc::new(wgpu_core::global::Global::new(
-            "webgpu",
+        state.put(std::sync::Arc::new(wgpu_core::global::Global::<
             wgpu_core::identity::IdentityManagerFactory,
+        >::new(
+            "webgpu",
             wgpu_types::InstanceDescriptor {
                 backends,
                 flags: wgpu_types::InstanceFlags::from_build_config(),

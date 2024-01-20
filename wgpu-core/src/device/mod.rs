@@ -3,7 +3,7 @@ use crate::{
     hal_api::HalApi,
     hub::Hub,
     id::{self},
-    identity::{GlobalIdentityHandlerFactory, Input},
+    identity::IdentityHandlerFactory,
     resource::{Buffer, BufferAccessResult},
     resource::{BufferAccessError, BufferMapOperation},
     resource_log, Label, DOWNLEVEL_ERROR_MESSAGE,
@@ -464,12 +464,12 @@ pub struct ImplicitPipelineContext {
     pub group_ids: ArrayVec<id::BindGroupLayoutId, { hal::MAX_BIND_GROUPS }>,
 }
 
-pub struct ImplicitPipelineIds<'a, G: GlobalIdentityHandlerFactory> {
-    pub root_id: Input<G, id::PipelineLayoutId>,
-    pub group_ids: &'a [Input<G, id::BindGroupLayoutId>],
+pub struct ImplicitPipelineIds<'a, G: IdentityHandlerFactory> {
+    pub root_id: G::Input,
+    pub group_ids: &'a [G::Input],
 }
 
-impl<G: GlobalIdentityHandlerFactory> ImplicitPipelineIds<'_, G> {
+impl<G: IdentityHandlerFactory> ImplicitPipelineIds<'_, G> {
     fn prepare<A: HalApi>(self, hub: &Hub<A>) -> ImplicitPipelineContext {
         ImplicitPipelineContext {
             root_id: hub.pipeline_layouts.prepare::<G>(self.root_id).into_id(),
