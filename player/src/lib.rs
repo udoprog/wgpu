@@ -230,13 +230,15 @@ impl GlobalPlay for wgc::global::Global {
             }
             Action::CreateBindGroup(id, desc) => {
                 self.device_maintain_ids::<A>(device).unwrap();
-                let (_, error) = self.device_create_bind_group::<A>(device, &desc, Some(id));
+                let backend = self.backend(device);
+                let device = backend.device_by_id(device);
+                let (_, error) = backend.device_create_bind_group(device, &desc, Some(id));
                 if let Some(e) = error {
                     panic!("{e}");
                 }
             }
             Action::DestroyBindGroup(id) => {
-                self.bind_group_drop::<A>(id);
+                self.backend(id).bind_group_drop(id);
             }
             Action::CreateShaderModule { id, desc, data } => {
                 log::debug!("Creating shader from {}", data);

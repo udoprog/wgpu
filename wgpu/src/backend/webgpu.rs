@@ -1604,7 +1604,7 @@ impl crate::context::Context for ContextWebGpu {
         _device: &Self::DeviceId,
         device_data: &Self::DeviceData,
         desc: &crate::BindGroupDescriptor<'_>,
-    ) -> (Self::BindGroupId, Self::BindGroupData) {
+    ) -> Self::BindGroupData {
         let mapped_entries = desc
             .entries
             .iter()
@@ -1656,7 +1656,7 @@ impl crate::context::Context for ContextWebGpu {
         if let Some(label) = desc.label {
             mapped_desc.label(label);
         }
-        create_identified(device_data.0.create_bind_group(&mapped_desc))
+        Sendable(device_data.0.create_bind_group(&mapped_desc))
     }
 
     fn device_create_pipeline_layout(
@@ -2130,11 +2130,7 @@ impl crate::context::Context for ContextWebGpu {
         // Dropped automatically
     }
 
-    fn bind_group_drop(
-        &self,
-        _bind_group: &Self::BindGroupId,
-        _bind_group_data: &Self::BindGroupData,
-    ) {
+    fn bind_group_drop(&self, _bind_group_data: &Self::BindGroupData) {
         // Dropped automatically
     }
 
@@ -2747,7 +2743,6 @@ impl crate::context::Context for ContextWebGpu {
         _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         index: u32,
-        _bind_group: &Self::BindGroupId,
         bind_group_data: &Self::BindGroupData,
         offsets: &[wgt::DynamicOffset],
     ) {
@@ -2877,7 +2872,6 @@ impl crate::context::Context for ContextWebGpu {
         _encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         index: u32,
-        _bind_group: &Self::BindGroupId,
         bind_group_data: &Self::BindGroupData,
         offsets: &[wgt::DynamicOffset],
     ) {
@@ -3100,7 +3094,6 @@ impl crate::context::Context for ContextWebGpu {
         _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         index: u32,
-        _bind_group: &Self::BindGroupId,
         bind_group_data: &Self::BindGroupData,
         offsets: &[wgt::DynamicOffset],
     ) {

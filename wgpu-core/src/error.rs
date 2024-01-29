@@ -24,7 +24,7 @@ impl<'a> ErrorFormatter<'a> {
     }
 
     pub fn bind_group_label(&mut self, id: &crate::id::BindGroupId) {
-        let label: String = gfx_select!(id => self.global.bind_group_label(*id));
+        let label: String = self.global.backend(*id).bind_group_label(*id);
         self.label("bind group", &label);
     }
 

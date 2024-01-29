@@ -30,6 +30,7 @@ use crate::{
     snatch::{SnatchGuard, SnatchLock, Snatchable},
     storage::Storage,
     track::{BindGroupStates, TextureSelector, Tracker},
+    traits,
     validation::{self, check_buffer_usage, check_texture_usage},
     FastHashMap, LabelHelpers as _, SubmissionIndex,
 };
@@ -58,6 +59,12 @@ use super::{
     DeviceDescriptor, DeviceError, ImplicitPipelineContext, UserClosures, ENTRYPOINT_FAILURE_ERROR,
     IMPLICIT_BIND_GROUP_LAYOUT_ERROR_LABEL, ZERO_BUFFER_SIZE,
 };
+
+impl<A: HalApi> traits::Device for Device<A> {
+    fn backend(&self) -> wgt::Backend {
+        A::VARIANT
+    }
+}
 
 /// Structure describing a logical device. Some members are internally mutable,
 /// stored behind mutexes.

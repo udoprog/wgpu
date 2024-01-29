@@ -113,6 +113,7 @@ impl ContextWgpuCore {
         }
         let error_sink = Arc::new(Mutex::new(ErrorSinkRaw::new()));
         let device = Device {
+            backend: self.0.backend_arc(device_id),
             id: device_id,
             error_sink: error_sink.clone(),
             features: desc.required_features,
@@ -383,6 +384,9 @@ impl Surface {
 
 #[derive(Debug)]
 pub struct Device {
+    // TODO: Replace with dyn wgc::Device once we no longer need access to the
+    // identifier.
+    backend: Arc<dyn wgc::Backend>,
     id: wgc::id::DeviceId,
     error_sink: ErrorSink,
     features: Features,
@@ -394,6 +398,12 @@ impl Device {
     pub fn id(&self) -> wgc::id::DeviceId {
         self.id
     }
+}
+
+#[derive(Debug)]
+pub struct BindGroup {
+    backend: Arc<dyn wgc::Backend>,
+    id: wgc::id::BindGroupId,
 }
 
 #[derive(Debug)]
@@ -447,7 +457,7 @@ impl crate::Context for ContextWgpuCore {
     type BindGroupLayoutId = wgc::id::BindGroupLayoutId;
     type BindGroupLayoutData = ();
     type BindGroupId = wgc::id::BindGroupId;
-    type BindGroupData = ();
+    type BindGroupData = BindGroup;
     type TextureViewId = wgc::id::TextureViewId;
     type TextureViewData = ();
     type SamplerId = wgc::id::SamplerId;
@@ -583,6 +593,7 @@ impl crate::Context for ContextWgpuCore {
         }
         let error_sink = Arc::new(Mutex::new(ErrorSinkRaw::new()));
         let device = Device {
+            backend: self.0.backend_arc(device_id),
             id: device_id,
             error_sink: error_sink.clone(),
             features: desc.required_features,
@@ -1012,11 +1023,13 @@ impl crate::Context for ContextWgpuCore {
             entries: Borrowed(&entries),
         };
 
-        let (id, error) = wgc::gfx_select!(device => self.0.device_create_bind_group(
-            *device,
-            &descriptor,
-            None
-        ));
+        // TODO: Remove this.
+        let device = device_data.backend.device_by_id(*device);
+
+        let (id, error) = device_data
+            .backend
+            .device_create_bind_group(device, &descriptor, None);
+
         if let Some(cause) = error {
             self.handle_error(
                 &device_data.error_sink,
@@ -1026,7 +1039,13 @@ impl crate::Context for ContextWgpuCore {
                 "Device::create_bind_group",
             );
         }
-        (id, ())
+        (
+            id,
+            BindGroup {
+                backend: device_data.backend.clone(),
+                id,
+            },
+        )
     }
     fn device_create_pipeline_layout(
         &self,
@@ -1566,10 +1585,10 @@ impl crate::Context for ContextWgpuCore {
 
     fn bind_group_drop(
         &self,
-        bind_group: &Self::BindGroupId,
-        _bind_group_data: &Self::BindGroupData,
+        _bind_group: &Self::BindGroupId,
+        bind_group_data: &Self::BindGroupData,
     ) {
-        wgc::gfx_select!(*bind_group => self.0.bind_group_drop(*bind_group))
+        bind_group_data.backend.bind_group_drop(bind_group_data.id);
     }
 
     fn bind_group_layout_drop(
@@ -2264,15 +2283,15 @@ impl crate::Context for ContextWgpuCore {
         _pass: &mut Self::ComputePassId,
         pass_data: &mut Self::ComputePassData,
         index: u32,
-        bind_group: &Self::BindGroupId,
-        _bind_group_data: &Self::BindGroupData,
+        _bind_group: &Self::BindGroupId,
+        bind_group_data: &Self::BindGroupData,
         offsets: &[wgt::DynamicOffset],
     ) {
         unsafe {
             wgpu_compute_pass_set_bind_group(
                 pass_data,
                 index,
-                *bind_group,
+                bind_group_data.id,
                 offsets.as_ptr(),
                 offsets.len(),
             )
@@ -2395,15 +2414,15 @@ impl crate::Context for ContextWgpuCore {
         __encoder: &mut Self::RenderBundleEncoderId,
         encoder_data: &mut Self::RenderBundleEncoderData,
         index: u32,
-        bind_group: &Self::BindGroupId,
-        __bind_group_data: &Self::BindGroupData,
+        _bind_group: &Self::BindGroupId,
+        bind_group_data: &Self::BindGroupData,
         offsets: &[wgt::DynamicOffset],
     ) {
         unsafe {
             wgpu_render_bundle_set_bind_group(
                 encoder_data,
                 index,
-                *bind_group,
+                bind_group_data.id,
                 offsets.as_ptr(),
                 offsets.len(),
             )
@@ -2580,15 +2599,15 @@ impl crate::Context for ContextWgpuCore {
         _pass: &mut Self::RenderPassId,
         pass_data: &mut Self::RenderPassData,
         index: u32,
-        bind_group: &Self::BindGroupId,
-        _bind_group_data: &Self::BindGroupData,
+        _bind_group: &Self::BindGroupId,
+        bind_group_data: &Self::BindGroupData,
         offsets: &[wgt::DynamicOffset],
     ) {
         unsafe {
             wgpu_render_pass_set_bind_group(
                 pass_data,
                 index,
-                *bind_group,
+                bind_group_data.id,
                 offsets.as_ptr(),
                 offsets.len(),
             )

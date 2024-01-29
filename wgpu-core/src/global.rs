@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
-use wgt::Backend;
-
 use crate::{
     hal_api::HalApi,
-    hub::{HubReport, Hubs},
+    hub::HubReport,
+    id::{Id, Marker},
     instance::{Instance, Surface},
     registry::{Registry, RegistryReport},
     resource_log,
     storage::Element,
+    traits::{Backend, Backends},
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -28,16 +28,16 @@ impl GlobalReport {
     pub fn surfaces(&self) -> &RegistryReport {
         &self.surfaces
     }
-    pub fn hub_report(&self, backend: Backend) -> &HubReport {
+    pub fn hub_report(&self, backend: wgt::Backend) -> &HubReport {
         match backend {
             #[cfg(vulkan)]
-            Backend::Vulkan => self.vulkan.as_ref().unwrap(),
+            wgt::Backend::Vulkan => self.vulkan.as_ref().unwrap(),
             #[cfg(metal)]
-            Backend::Metal => self.metal.as_ref().unwrap(),
+            wgt::Backend::Metal => self.metal.as_ref().unwrap(),
             #[cfg(dx12)]
-            Backend::Dx12 => self.dx12.as_ref().unwrap(),
+            wgt::Backend::Dx12 => self.dx12.as_ref().unwrap(),
             #[cfg(gles)]
-            Backend::Gl => self.gl.as_ref().unwrap(),
+            wgt::Backend::Gl => self.gl.as_ref().unwrap(),
             _ => panic!("HubReport is not supported on this backend"),
         }
     }
@@ -46,7 +46,7 @@ impl GlobalReport {
 pub struct Global {
     pub instance: Instance,
     pub surfaces: Registry<Surface>,
-    pub(crate) hubs: Hubs,
+    pub(crate) backends: Backends,
 }
 
 impl Global {
@@ -55,7 +55,51 @@ impl Global {
         Self {
             instance: Instance::new(name, instance_desc),
             surfaces: Registry::without_backend(),
-            hubs: Hubs::new(),
+            backends: Backends::new(),
+        }
+    }
+
+    /// Get a dynamic reference to the backend referenced by the given
+    /// identifier.
+    ///
+    /// Note: This is a stop-gap API provided to access a dynamic backend, until
+    /// wgpu-core has been refactored to no longer require it.
+    pub fn backend<T>(&self, id: Id<T>) -> &dyn Backend
+    where
+        T: Marker,
+    {
+        match id.backend() {
+            #[cfg(vulkan)]
+            wgt::Backend::Vulkan => self.backends.vulkan.as_ref(),
+            #[cfg(metal)]
+            wgt::Backend::Metal => self.backends.metal.as_ref(),
+            #[cfg(dx12)]
+            wgt::Backend::Dx12 => self.backends.dx12.as_ref(),
+            #[cfg(gles)]
+            wgt::Backend::Gl => self.backends.gl.as_ref(),
+            _ => panic!("Identifier {id:?} is not associated with a supported backend"),
+        }
+    }
+
+    /// Get an owned dynamic reference to the backend referenced by the given
+    /// identifier.
+    ///
+    /// Note: This is a stop-gap API provided to access a dynamic backend, until
+    /// wgpu-core has been refactored to no longer require it.
+    pub fn backend_arc<T>(&self, id: Id<T>) -> Arc<dyn Backend>
+    where
+        T: Marker,
+    {
+        match id.backend() {
+            #[cfg(vulkan)]
+            wgt::Backend::Vulkan => self.backends.vulkan.clone(),
+            #[cfg(metal)]
+            wgt::Backend::Metal => self.backends.metal.clone(),
+            #[cfg(dx12)]
+            wgt::Backend::Dx12 => self.backends.dx12.clone(),
+            #[cfg(gles)]
+            wgt::Backend::Gl => self.backends.gl.clone(),
+            _ => panic!("Identifier {id:?} is not associated with a supported backend"),
         }
     }
 
@@ -67,7 +111,7 @@ impl Global {
         Self {
             instance: A::create_instance_from_hal(name, hal_instance),
             surfaces: Registry::without_backend(),
-            hubs: Hubs::new(),
+            backends: Backends::new(),
         }
     }
 
@@ -86,7 +130,7 @@ impl Global {
         Self {
             instance,
             surfaces: Registry::without_backend(),
-            hubs: Hubs::new(),
+            backends: Backends::new(),
         }
     }
 
@@ -102,25 +146,25 @@ impl Global {
             surfaces: self.surfaces.generate_report(),
             #[cfg(vulkan)]
             vulkan: if self.instance.vulkan.is_some() {
-                Some(self.hubs.vulkan.generate_report())
+                Some(self.backends.vulkan.hub.generate_report())
             } else {
                 None
             },
             #[cfg(metal)]
             metal: if self.instance.metal.is_some() {
-                Some(self.hubs.metal.generate_report())
+                Some(self.backends.metal.hub.generate_report())
             } else {
                 None
             },
             #[cfg(dx12)]
             dx12: if self.instance.dx12.is_some() {
-                Some(self.hubs.dx12.generate_report())
+                Some(self.backends.dx12.hub.generate_report())
             } else {
                 None
             },
             #[cfg(gles)]
             gl: if self.instance.gl.is_some() {
-                Some(self.hubs.gl.generate_report())
+                Some(self.backends.gl.hub.generate_report())
             } else {
                 None
             },
@@ -137,19 +181,19 @@ impl Drop for Global {
         // destroy hubs before the instance gets dropped
         #[cfg(vulkan)]
         {
-            self.hubs.vulkan.clear(&surfaces_locked, true);
+            self.backends.vulkan.hub.clear(&surfaces_locked, true);
         }
         #[cfg(metal)]
         {
-            self.hubs.metal.clear(&surfaces_locked, true);
+            self.hubs.metal.hub.clear(&surfaces_locked, true);
         }
         #[cfg(dx12)]
         {
-            self.hubs.dx12.clear(&surfaces_locked, true);
+            self.backends.dx12.hub.clear(&surfaces_locked, true);
         }
         #[cfg(gles)]
         {
-            self.hubs.gl.clear(&surfaces_locked, true);
+            self.backends.gl.hub.clear(&surfaces_locked, true);
         }
 
         // destroy surfaces

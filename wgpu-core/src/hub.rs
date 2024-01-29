@@ -198,7 +198,7 @@ pub struct Hub<A: HalApi> {
 }
 
 impl<A: HalApi> Hub<A> {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             adapters: Registry::new(A::VARIANT),
             devices: Registry::new(A::VARIANT),
@@ -294,36 +294,6 @@ impl<A: HalApi> Hub<A> {
             textures: self.textures.generate_report(),
             texture_views: self.texture_views.generate_report(),
             samplers: self.samplers.generate_report(),
-        }
-    }
-}
-
-pub struct Hubs {
-    #[cfg(vulkan)]
-    pub(crate) vulkan: Hub<hal::api::Vulkan>,
-    #[cfg(metal)]
-    pub(crate) metal: Hub<hal::api::Metal>,
-    #[cfg(dx12)]
-    pub(crate) dx12: Hub<hal::api::Dx12>,
-    #[cfg(gles)]
-    pub(crate) gl: Hub<hal::api::Gles>,
-    #[cfg(all(not(vulkan), not(metal), not(dx12), not(gles)))]
-    pub(crate) empty: Hub<hal::api::Empty>,
-}
-
-impl Hubs {
-    pub(crate) fn new() -> Self {
-        Self {
-            #[cfg(vulkan)]
-            vulkan: Hub::new(),
-            #[cfg(metal)]
-            metal: Hub::new(),
-            #[cfg(dx12)]
-            dx12: Hub::new(),
-            #[cfg(gles)]
-            gl: Hub::new(),
-            #[cfg(all(not(vulkan), not(metal), not(dx12), not(gles)))]
-            empty: Hub::new(),
         }
     }
 }

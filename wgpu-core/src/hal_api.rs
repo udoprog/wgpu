@@ -44,7 +44,7 @@ impl HalApi for hal::api::Vulkan {
         instance.vulkan.as_ref()
     }
     fn hub(global: &Global) -> &Hub<Self> {
-        &global.hubs.vulkan
+        &global.backends.vulkan.hub
     }
     fn get_surface(surface: &Surface) -> Option<&HalSurface<Self>> {
         surface.raw.downcast_ref()
@@ -65,7 +65,7 @@ impl HalApi for hal::api::Metal {
         instance.metal.as_ref()
     }
     fn hub(global: &Global) -> &Hub<Self> {
-        &global.hubs.metal
+        &global.backends.metal.hub
     }
     fn get_surface(surface: &Surface) -> Option<&HalSurface<Self>> {
         surface.raw.downcast_ref()
@@ -86,7 +86,7 @@ impl HalApi for hal::api::Dx12 {
         instance.dx12.as_ref()
     }
     fn hub(global: &Global) -> &Hub<Self> {
-        &global.hubs.dx12
+        &global.backends.dx12.hub
     }
     fn get_surface(surface: &Surface) -> Option<&HalSurface<Self>> {
         surface.raw.downcast_ref()
@@ -108,7 +108,7 @@ impl HalApi for hal::api::Gles {
         instance.gl.as_ref()
     }
     fn hub(global: &Global) -> &Hub<Self> {
-        &global.hubs.gl
+        &global.backends.gl.hub
     }
     fn get_surface(surface: &Surface) -> Option<&HalSurface<Self>> {
         surface.raw.downcast_ref()

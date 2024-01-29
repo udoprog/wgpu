@@ -14,6 +14,7 @@ use crate::{
     pipeline, present,
     resource::{self, BufferAccessResult},
     resource::{BufferAccessError, BufferMapOperation, CreateBufferError, Resource},
+    traits::{self, DowncastArc as _},
     validation::check_buffer_usage,
     Label, LabelHelpers as _,
 };
@@ -1088,23 +1089,22 @@ impl Global {
                 .insert(pipeline_layout_id, layout.clone());
         }
     }
+}
 
-    pub fn device_create_bind_group<A: HalApi>(
+impl<A: HalApi> traits::BackendBindGroupApi for traits::BackendDetails<A> {
+    fn device_create_bind_group(
         &self,
-        device_id: DeviceId,
+        device: Arc<dyn traits::Device>,
         desc: &binding_model::BindGroupDescriptor,
         id_in: Option<id::BindGroupId>,
     ) -> (id::BindGroupId, Option<binding_model::CreateBindGroupError>) {
         profiling::scope!("Device::create_bind_group");
 
-        let hub = A::hub(self);
-        let fid = hub.bind_groups.prepare(id_in);
+        let device = device.downcast_arc();
+
+        let fid = self.hub.bind_groups.prepare(id_in);
 
         let error = loop {
-            let device = match hub.devices.get(device_id) {
-                Ok(device) => device,
-                Err(_) => break DeviceError::Invalid.into(),
-            };
             if !device.is_valid() {
                 break DeviceError::Lost.into();
             }
@@ -1114,7 +1114,7 @@ impl Global {
                 trace.add(trace::Action::CreateBindGroup(fid.id(), desc.clone()));
             }
 
-            let bind_group_layout = match hub.bind_group_layouts.get(desc.layout) {
+            let bind_group_layout = match self.hub.bind_group_layouts.get(desc.layout) {
                 Ok(layout) => layout,
                 Err(..) => break binding_model::CreateBindGroupError::InvalidLayout,
             };
@@ -1123,7 +1123,7 @@ impl Global {
                 break DeviceError::WrongDevice.into();
             }
 
-            let bind_group = match device.create_bind_group(&bind_group_layout, desc, hub) {
+            let bind_group = match device.create_bind_group(&bind_group_layout, desc, &self.hub) {
                 Ok(bind_group) => bind_group,
                 Err(e) => break e,
             };
@@ -1152,17 +1152,15 @@ impl Global {
         (id, Some(error))
     }
 
-    pub fn bind_group_label<A: HalApi>(&self, id: id::BindGroupId) -> String {
-        A::hub(self).bind_groups.label_for_resource(id)
+    fn bind_group_label(&self, id: id::BindGroupId) -> String {
+        self.hub.bind_groups.label_for_resource(id)
     }
 
-    pub fn bind_group_drop<A: HalApi>(&self, bind_group_id: id::BindGroupId) {
+    fn bind_group_drop(&self, bind_group_id: id::BindGroupId) {
         profiling::scope!("BindGroup::drop");
         api_log!("BindGroup::drop {bind_group_id:?}");
 
-        let hub = A::hub(self);
-
-        if let Some(bind_group) = hub.bind_groups.unregister(bind_group_id) {
+        if let Some(bind_group) = self.hub.bind_groups.unregister(bind_group_id) {
             bind_group
                 .device
                 .lock_life()
@@ -1171,7 +1169,9 @@ impl Global {
                 .insert(bind_group_id, bind_group.clone());
         }
     }
+}
 
+impl Global {
     pub fn device_create_shader_module<A: HalApi>(
         &self,
         device_id: DeviceId,
