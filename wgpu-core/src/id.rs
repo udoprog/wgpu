@@ -298,52 +298,119 @@ pub trait Marker: 'static + WasmNotSendSync {}
 #[cfg(test)]
 impl Marker for () {}
 
-/// Define identifiers for each resource.
-macro_rules! ids {
-    ($(
-        $(#[$($meta:meta)*])*
-        pub type $name:ident $marker:ident;
-    )*) => {
-        /// Marker types for each resource.
-        pub mod markers {
-            $(
-                #[derive(Debug)]
-                pub enum $marker {}
-                impl super::Marker for $marker {}
-            )*
-        }
+/// Marker types for each resource.
+pub mod markers {
+    #[derive(Debug)]
+    pub enum Adapter {}
+    impl super::Marker for Adapter {}
 
-        $(
-            $(#[$($meta)*])*
-            pub type $name = Id<self::markers::$marker>;
-        )*
-    }
+    #[derive(Debug)]
+    pub enum Surface {}
+    impl super::Marker for Surface {}
+
+    #[derive(Debug)]
+    pub enum Device {}
+    impl super::Marker for Device {}
+
+    #[derive(Debug)]
+    pub enum Queue {}
+    impl super::Marker for Queue {}
+
+    #[derive(Debug)]
+    pub enum Buffer {}
+    impl super::Marker for Buffer {}
+
+    #[derive(Debug)]
+    pub enum StagingBuffer {}
+    impl super::Marker for StagingBuffer {}
+
+    #[derive(Debug)]
+    pub enum TextureView {}
+    impl super::Marker for TextureView {}
+
+    #[derive(Debug)]
+    pub enum Texture {}
+    impl super::Marker for Texture {}
+
+    #[derive(Debug)]
+    pub enum Sampler {}
+    impl super::Marker for Sampler {}
+
+    #[derive(Debug)]
+    pub enum BindGroupLayout {}
+    impl super::Marker for BindGroupLayout {}
+
+    #[derive(Debug)]
+    pub enum PipelineLayout {}
+    impl super::Marker for PipelineLayout {}
+
+    #[derive(Debug)]
+    pub enum BindGroup {}
+    impl super::Marker for BindGroup {}
+
+    #[derive(Debug)]
+    pub enum ShaderModule {}
+    impl super::Marker for ShaderModule {}
+
+    #[derive(Debug)]
+    pub enum RenderPipeline {}
+    impl super::Marker for RenderPipeline {}
+
+    #[derive(Debug)]
+    pub enum ComputePipeline {}
+    impl super::Marker for ComputePipeline {}
+
+    #[derive(Debug)]
+    pub enum CommandEncoder {}
+    impl super::Marker for CommandEncoder {}
+
+    #[derive(Debug)]
+    pub enum CommandBuffer {}
+    impl super::Marker for CommandBuffer {}
+
+    #[derive(Debug)]
+    pub enum RenderPassEncoder {}
+    impl super::Marker for RenderPassEncoder {}
+
+    #[derive(Debug)]
+    pub enum ComputePassEncoder {}
+    impl super::Marker for ComputePassEncoder {}
+
+    #[derive(Debug)]
+    pub enum RenderBundleEncoder {}
+    impl super::Marker for RenderBundleEncoder {}
+
+    #[derive(Debug)]
+    pub enum RenderBundle {}
+    impl super::Marker for RenderBundle {}
+
+    #[derive(Debug)]
+    pub enum QuerySet {}
+    impl super::Marker for QuerySet {}
 }
 
-ids! {
-    pub type AdapterId Adapter;
-    pub type SurfaceId Surface;
-    pub type DeviceId Device;
-    pub type QueueId Queue;
-    pub type BufferId Buffer;
-    pub type StagingBufferId StagingBuffer;
-    pub type TextureViewId TextureView;
-    pub type TextureId Texture;
-    pub type SamplerId Sampler;
-    pub type BindGroupLayoutId BindGroupLayout;
-    pub type PipelineLayoutId PipelineLayout;
-    pub type BindGroupId BindGroup;
-    pub type ShaderModuleId ShaderModule;
-    pub type RenderPipelineId RenderPipeline;
-    pub type ComputePipelineId ComputePipeline;
-    pub type CommandEncoderId CommandEncoder;
-    pub type CommandBufferId CommandBuffer;
-    pub type RenderPassEncoderId RenderPassEncoder;
-    pub type ComputePassEncoderId ComputePassEncoder;
-    pub type RenderBundleEncoderId RenderBundleEncoder;
-    pub type RenderBundleId RenderBundle;
-    pub type QuerySetId QuerySet;
-}
+pub type AdapterId = Id<self::markers::Adapter>;
+pub type SurfaceId = Id<self::markers::Surface>;
+pub type DeviceId = Id<self::markers::Device>;
+pub type QueueId = Id<self::markers::Queue>;
+pub type BufferId = Id<self::markers::Buffer>;
+pub type StagingBufferId = Id<self::markers::StagingBuffer>;
+pub type TextureViewId = Id<self::markers::TextureView>;
+pub type TextureId = Id<self::markers::Texture>;
+pub type SamplerId = Id<self::markers::Sampler>;
+pub type BindGroupLayoutId = Id<self::markers::BindGroupLayout>;
+pub type PipelineLayoutId = Id<self::markers::PipelineLayout>;
+pub type BindGroupId = Id<self::markers::BindGroup>;
+pub type ShaderModuleId = Id<self::markers::ShaderModule>;
+pub type RenderPipelineId = Id<self::markers::RenderPipeline>;
+pub type ComputePipelineId = Id<self::markers::ComputePipeline>;
+pub type CommandEncoderId = Id<self::markers::CommandEncoder>;
+pub type CommandBufferId = Id<self::markers::CommandBuffer>;
+pub type RenderPassEncoderId = Id<self::markers::RenderPassEncoder>;
+pub type ComputePassEncoderId = Id<self::markers::ComputePassEncoder>;
+pub type RenderBundleEncoderId = Id<self::markers::RenderBundleEncoder>;
+pub type RenderBundleId = Id<self::markers::RenderBundle>;
+pub type QuerySetId = Id<self::markers::QuerySet>;
 
 #[test]
 fn test_id_backend() {
