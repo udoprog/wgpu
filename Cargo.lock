@@ -3571,6 +3571,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f962df74c8c05a667b5ee8bcf162993134c104e96440b663c8daa176dc772d8c"
 
 [[package]]
+name = "unlock"
+version = "0.0.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e71916a17c119ec98802bce4b7b9e76f5758638fbc42285f3efdaacb46e3357"
+dependencies = [
+ "num_cpus",
+ "parking_lot",
+]
+
+[[package]]
 name = "url"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3981,6 +3991,7 @@ dependencies = [
  "web-sys",
  "wgpu-core",
  "wgpu-hal",
+ "wgpu-sync",
  "wgpu-types",
 ]
 
@@ -3998,7 +4009,6 @@ dependencies = [
  "log",
  "naga",
  "once_cell",
- "parking_lot",
  "profiling",
  "raw-window-handle 0.6.0",
  "ron",
@@ -4008,6 +4018,7 @@ dependencies = [
  "thiserror",
  "web-sys",
  "wgpu-hal",
+ "wgpu-sync",
  "wgpu-types",
 ]
 
@@ -4112,6 +4123,14 @@ dependencies = [
  "heck",
  "quote",
  "syn 2.0.48",
+]
+
+[[package]]
+name = "wgpu-sync"
+version = "0.19.0"
+dependencies = [
+ "parking_lot",
+ "unlock",
 ]
 
 [[package]]
